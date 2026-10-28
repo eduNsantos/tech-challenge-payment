@@ -58,10 +58,10 @@ cd ..
 ### 2. Configurar variáveis Terraform
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars
+cp infra/terraform.tfvars.example infra/terraform.tfvars
 ```
 
-Editar `terraform.tfvars` com os valores reais:
+Editar `infra/terraform.tfvars` com os valores reais:
 
 ```hcl
 mp_access_token      = "APP_USR-..."    # Painel MP > Configurações > Credenciais de produção
@@ -94,6 +94,8 @@ aws sts get-caller-identity
 ### Deploy via Terraform (local)
 
 ```bash
+cd infra
+
 # 1. Inicializar providers e backend S3
 terraform init
 
@@ -282,25 +284,26 @@ tech-challenge-payment-service/
 │   ├── notify-wait/index.js      # Step ③/④ — notifica app + WaitForTaskToken
 │   ├── cancel/index.js           # Step ⑤ — cancela gateway + marca EXPIRED
 │   └── callback/index.js         # Webhook MP → sendTaskSuccess/Failure
-├── providers.tf                  # Backend S3, providers
-├── variables.tf
-├── data.tf                       # VPC, subnets (compartilhados com EKS)
-├── network.tf                    # Security groups, VPC endpoint Secrets Manager
-├── sqs.tf                        # Fila payment-orders + DLQ
-├── dynamodb.tf                   # Tabela payment-saga-state + GSI + TTL
-├── sns.tf                        # Tópico payment-dlq-notifications
-├── secrets.tf                    # mp-access-token + mp-webhook-secret
-├── iam.tf                        # Assume role policy + role Step Functions
-├── lambda-build.tf               # null_resource (npm ci) + archive_file
-├── lambda-trigger.tf
-├── lambda-register.tf
-├── lambda-generate-link.tf
-├── lambda-notify-wait.tf
-├── lambda-cancel.tf
-├── lambda-callback.tf
-├── step-functions.tf             # State machine (ASL inline via jsonencode)
-├── apigateway.tf                 # HTTP API v2 + POST /webhook
-├── outputs.tf
-├── terraform.tfvars.example
+├── infra/                        # Infraestrutura Terraform
+│   ├── providers.tf              # Backend S3, providers
+│   ├── variables.tf
+│   ├── data.tf                   # VPC, subnets (compartilhados com EKS)
+│   ├── network.tf                # Security groups, VPC endpoint Secrets Manager
+│   ├── sqs.tf                    # Fila payment-orders + DLQ
+│   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
+│   ├── sns.tf                    # Tópico payment-dlq-notifications
+│   ├── secrets.tf                # mp-access-token + mp-webhook-secret
+│   ├── iam.tf                    # Assume role policy + role Step Functions
+│   ├── lambda-build.tf           # null_resource (npm ci) + archive_file
+│   ├── lambda-trigger.tf
+│   ├── lambda-register.tf
+│   ├── lambda-generate-link.tf
+│   ├── lambda-notify-wait.tf
+│   ├── lambda-cancel.tf
+│   ├── lambda-callback.tf
+│   ├── step-functions.tf         # State machine (ASL inline via jsonencode)
+│   ├── apigateway.tf             # HTTP API v2 + POST /webhook
+│   ├── outputs.tf
+│   └── terraform.tfvars.example
 └── .github/workflows/deploy.yml  # CI/CD: test → terraform apply
 ```

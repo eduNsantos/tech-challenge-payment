@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch: {}
 
 permissions:
@@ -64,6 +67,7 @@ jobs:
           terraform_version: "1.13.5"
 
       - name: Terraform init
+        working-directory: infra
         run: |
           for attempt in 1 2 3; do
             echo "Running terraform init (attempt ${attempt}/3)"
@@ -86,6 +90,7 @@ jobs:
           done
 
       - name: Restore and import Secrets Manager secrets
+        working-directory: infra
         shell: bash
         run: |
           set -e
@@ -127,7 +132,9 @@ jobs:
           import_secret "payment/mp-webhook-secret" "aws_secretsmanager_secret.mp_webhook_secret"
 
       - name: Terraform plan
+        working-directory: infra
         run: terraform plan
 
       - name: Terraform apply
+        working-directory: infra
         run: terraform apply -auto-approve
