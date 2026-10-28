@@ -1,0 +1,54 @@
+meta {
+  name: MP - Pagamento rejeitado
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  x-signature: ts=1698499200,v1=abc123placeholder
+  x-request-id: req-{{$randomInt}}
+}
+
+body:json {
+  {
+    "id": "98765433",
+    "live_mode": false,
+    "type": "payment",
+    "date_created": "2026-10-28T15:00:00Z",
+    "user_id": 477478162,
+    "api_version": "v1",
+    "action": "payment.updated",
+    "data": {
+      "id": "98765433"
+    }
+  }
+}
+
+docs {
+  ## Webhook — Pagamento rejeitado
+
+  Simula o callback quando o pagamento é recusado pelo banco ou operadora
+  (`status: "rejected"`).
+
+  ### Fluxo esperado
+  1. Lambda Callback valida o `x-signature`
+  2. Busca os detalhes: `status = "rejected"`
+  3. Atualiza DynamoDB com `status = REJECTED`
+  4. Chama `sendTaskFailure` no Step Functions — a SAGA não vai para Step ⑤
+     (cancelamento no gateway só é necessário em timeout de 48h, não em rejeição)
+
+  ### status_detail comuns para rejeição
+  | status_detail | Causa |
+  |---|---|
+  | cc_rejected_insufficient_amount | Sem limite |
+  | cc_rejected_bad_filled_security_code | CVV errado |
+  | cc_rejected_blacklist | Cartão bloqueado |
+  | cc_rejected_call_for_authorize | Requer autorização do banco |
+}

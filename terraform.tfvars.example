@@ -1,0 +1,6 @@
+# Copie para terraform.tfvars e preencha os valores reais
+# NUNCA commite terraform.tfvars — ele esta no .gitignore
+
+mp_access_token      = "APP_USR-..."    # Painel MP: Configuracoes > Credenciais
+mp_webhook_secret    = "..."            # Painel MP: Configuracoes > Notificacoes > Chave secreta
+app_notification_url = "https://..."   # URL interna do App/EKS para receber o link de pagamento

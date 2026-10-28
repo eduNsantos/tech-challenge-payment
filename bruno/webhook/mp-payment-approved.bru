@@ -1,0 +1,53 @@
+meta {
+  name: MP - Pagamento aprovado
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  x-signature: ts=1698499200,v1=abc123placeholder
+  x-request-id: req-{{$randomInt}}
+}
+
+body:json {
+  {
+    "id": "98765432",
+    "live_mode": false,
+    "type": "payment",
+    "date_created": "2026-10-28T14:32:00Z",
+    "user_id": 477478162,
+    "api_version": "v1",
+    "action": "payment.updated",
+    "data": {
+      "id": "98765432"
+    }
+  }
+}
+
+docs {
+  ## Webhook — Pagamento aprovado
+
+  Simula o callback que o Mercado Pago envia quando o pagamento é aprovado
+  (`status: "approved"`, `status_detail: "accredited"`).
+
+  ### Fluxo esperado
+  1. Lambda Callback valida o `x-signature` com o secret do Secrets Manager
+  2. Busca os detalhes do pagamento na API do Mercado Pago usando `data.id`
+  3. Atualiza o DynamoDB com `status = PAID`
+  4. Chama `sendTaskSuccess` no Step Functions para resolver o WaitForTaskToken (Step ④)
+
+  ### Header x-signature
+  O Mercado Pago assina os webhooks com HMAC-SHA256.
+  Formato: `ts=<timestamp_unix>,v1=<hmac_hex>`
+  A string assinada é: `id:<notification_id>;request-id:<x-request-id>;ts:<timestamp>;`
+
+  Em produção, o valor real vem do painel do Mercado Pago em:
+  Configurações → Notificações → Chave secreta
+}

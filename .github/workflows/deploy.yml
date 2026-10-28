@@ -1,0 +1,133 @@
+name: Deploy Payment Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payment-service-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install and test
+        run: |
+          cd src
+          npm ci
+          npm test
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+
+    env:
+      TF_VAR_mp_access_token:      ${{ secrets.TF_VAR_mp_access_token }}
+      TF_VAR_mp_webhook_secret:    ${{ secrets.TF_VAR_mp_webhook_secret }}
+      TF_VAR_app_notification_url: ${{ secrets.TF_VAR_app_notification_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Install Lambda dependencies
+        run: |
+          cd src
+          npm ci --omit=dev
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.5"
+
+      - name: Terraform init
+        run: |
+          for attempt in 1 2 3; do
+            echo "Running terraform init (attempt ${attempt}/3)"
+            set +e
+            terraform init 2>&1 | tee /tmp/terraform-init.log
+            status=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              break
+            fi
+
+            if grep -q "state data in S3 does not have the expected content" /tmp/terraform-init.log && [ "$attempt" -lt 3 ]; then
+              echo "Transient S3 checksum mismatch. Waiting 90s before retry..."
+              sleep 90
+              continue
+            fi
+
+            exit "$status"
+          done
+
+      - name: Restore and import Secrets Manager secrets
+        shell: bash
+        run: |
+          set -e
+
+          import_secret() {
+            local SECRET_NAME="$1"
+            local TF_RESOURCE="$2"
+
+            echo "Checking secret: $SECRET_NAME"
+
+            if aws secretsmanager describe-secret \
+                --secret-id "$SECRET_NAME" \
+                --region "$AWS_REGION" >/dev/null 2>&1; then
+
+              DELETED_DATE=$(aws secretsmanager describe-secret \
+                --secret-id "$SECRET_NAME" --region "$AWS_REGION" \
+                --query 'DeletedDate' --output text)
+
+              SECRET_ARN=$(aws secretsmanager describe-secret \
+                --secret-id "$SECRET_NAME" --region "$AWS_REGION" \
+                --query 'ARN' --output text)
+
+              if [ "$DELETED_DATE" != "None" ] && [ "$DELETED_DATE" != "null" ]; then
+                echo "Restoring deleted secret: $SECRET_NAME"
+                aws secretsmanager restore-secret \
+                  --secret-id "$SECRET_NAME" --region "$AWS_REGION" >/dev/null
+              fi
+
+              if ! terraform state show "$TF_RESOURCE" >/dev/null 2>&1; then
+                echo "Importing $TF_RESOURCE"
+                terraform import "$TF_RESOURCE" "$SECRET_ARN"
+              fi
+            else
+              echo "Secret $SECRET_NAME nao existe, Terraform ira criar."
+            fi
+          }
+
+          import_secret "payment/mp-access-token"   "aws_secretsmanager_secret.mp_access_token"
+          import_secret "payment/mp-webhook-secret" "aws_secretsmanager_secret.mp_webhook_secret"
+
+      - name: Terraform plan
+        run: terraform plan
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve

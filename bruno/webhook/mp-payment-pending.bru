@@ -1,0 +1,50 @@
+meta {
+  name: MP - Pagamento pendente (PIX/boleto)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  x-signature: ts=1698499200,v1=abc123placeholder
+  x-request-id: req-{{$randomInt}}
+}
+
+body:json {
+  {
+    "id": "98765434",
+    "live_mode": false,
+    "type": "payment",
+    "date_created": "2026-10-28T15:10:00Z",
+    "user_id": 477478162,
+    "api_version": "v1",
+    "action": "payment.created",
+    "data": {
+      "id": "98765434"
+    }
+  }
+}
+
+docs {
+  ## Webhook — Pagamento pendente
+
+  Simula o callback inicial de um pagamento via PIX ou boleto,
+  onde o `status = "pending"` aguarda confirmação bancária.
+
+  ### Fluxo esperado
+  1. Lambda Callback valida o `x-signature`
+  2. Busca os detalhes: `status = "pending"`
+  3. Atualiza DynamoDB com `status = WAITING_PAYMENT` (mantém o WaitForTaskToken ativo)
+  4. NÃO chama sendTaskSuccess ainda — aguarda novo webhook com `payment.updated`
+
+  ### Observação
+  O Step ④ (WaitForTaskToken) tem heartbeat de 30min e timeout de 48h.
+  Enquanto o pagamento fica "pending", o token permanece vivo.
+  Quando o banco confirmar, o Mercado Pago enviará outro webhook com `action: payment.updated`.
+}
