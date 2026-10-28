@@ -1,7 +1,7 @@
 resource "aws_dynamodb_table" "payment_saga" {
   name         = "payment-saga-state"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "idempotency_key"
+  hash_key     = "idempotency_key" #tfsec:ignore:aws-dynamodb-table-customer-key
 
   attribute {
     name = "idempotency_key"

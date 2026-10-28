@@ -4,6 +4,11 @@ infra/override.tf
 infra/override.tf.json
 infra/*_override.tf
 infra/*_override.tf.json
+
+# Bootstrap — state local (roda uma vez, não precisa de versionamento)
+infra/bootstrap/.terraform/
+infra/bootstrap/terraform.tfstate
+infra/bootstrap/terraform.tfstate.backup
 *.tfstate
 *.tfstate.backup
 *.tfplan
@@ -15,6 +20,10 @@ src/node_modules/
 # Secrets — tfvars real nunca entra no repo
 infra/*.tfvars
 !infra/terraform.tfvars.example
+
+# Backend config local — contém account ID específico de cada ambiente
+infra/backend.hcl
+!infra/backend.hcl.example
 
 # OS
 .DS_Store

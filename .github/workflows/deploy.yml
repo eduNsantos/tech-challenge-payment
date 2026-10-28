@@ -4,10 +4,20 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      aws_access_key_id:
+        description: 'AWS Access Key ID (Academy — expira em ~3h)'
+        required: true
+        type: string
+      aws_secret_access_key:
+        description: 'AWS Secret Access Key'
+        required: true
+        type: string
+      aws_session_token:
+        description: 'AWS Session Token (Academy obrigatório)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +48,8 @@ jobs:
   deploy:
     name: Deploy
     needs: test
+    # Só roda via workflow_dispatch — credenciais Academy expiram em ~3h
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     env:
@@ -49,11 +61,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      # Mascarar antes de qualquer uso para suprimir das logs
+      - name: Mask AWS credentials
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::add-mask::${{ inputs.aws_access_key_id }}"
+          echo "::add-mask::${{ inputs.aws_secret_access_key }}"
+          echo "::add-mask::${{ inputs.aws_session_token }}"
+
+      - name: Configure AWS credentials (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ inputs.aws_access_key_id }}
+          aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+          aws-session-token:     ${{ inputs.aws_session_token }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (push)
+        if: github.event_name == 'push'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region:            ${{ env.AWS_REGION }}
 
       - name: Install Lambda dependencies
@@ -66,13 +97,40 @@ jobs:
         with:
           terraform_version: "1.13.5"
 
+      - name: Ensure Terraform state bucket exists
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BACKEND_BUCKET="techchallenge-tfstate-${ACCOUNT_ID}"
+          echo "BACKEND_BUCKET=${BACKEND_BUCKET}" >> "$GITHUB_ENV"
+
+          if aws s3api head-bucket --bucket "$BACKEND_BUCKET" 2>/dev/null; then
+            echo "Bucket ${BACKEND_BUCKET} already exists."
+          else
+            echo "Creating bucket ${BACKEND_BUCKET}..."
+            aws s3api create-bucket --bucket "$BACKEND_BUCKET" --region us-east-1
+            aws s3api put-bucket-versioning \
+              --bucket "$BACKEND_BUCKET" \
+              --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption \
+              --bucket "$BACKEND_BUCKET" \
+              --server-side-encryption-configuration \
+              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+            aws s3api put-public-access-block \
+              --bucket "$BACKEND_BUCKET" \
+              --public-access-block-configuration \
+              "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+            echo "Bucket ${BACKEND_BUCKET} created."
+          fi
+
       - name: Terraform init
         working-directory: infra
         run: |
+          echo "Backend bucket: ${BACKEND_BUCKET}"
+
           for attempt in 1 2 3; do
             echo "Running terraform init (attempt ${attempt}/3)"
             set +e
-            terraform init 2>&1 | tee /tmp/terraform-init.log
+            terraform init -backend-config="bucket=${BACKEND_BUCKET}" 2>&1 | tee /tmp/terraform-init.log
             status=${PIPESTATUS[0]}
             set -e
 

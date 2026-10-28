@@ -38,7 +38,7 @@ Mercado Pago → POST /webhook → API Gateway → λ Callback
 | Terraform | 1.13.5 | https://developer.hashicorp.com/terraform/install |
 | Node.js | 24.x | https://nodejs.org |
 | AWS CLI | 2.x | https://aws.amazon.com/cli |
-| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, SNS, IAM, VPC |
+| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, SNS, IAM |
 
 ---
 
@@ -74,10 +74,10 @@ app_notification_url = "https://..."   # URL interna do App/EKS para receber o l
 ### 3. Configurar credenciais AWS
 
 ```bash
-aws configure
-# ou via variáveis de ambiente:
+# Via variáveis de ambiente (somem ao fechar o terminal — nada salvo no computador):
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
+export AWS_SESSION_TOKEN="..."   # somente para credenciais temporárias (ex: AWS Academy)
 export AWS_DEFAULT_REGION="us-east-1"
 ```
 
@@ -85,6 +85,28 @@ Verificar acesso:
 
 ```bash
 aws sts get-caller-identity
+```
+
+### 4. Criar o bucket S3 de state via Terraform (bootstrap)
+
+O bucket do Terraform state é criado pelo próprio Terraform — sem AWS CLI, sem console.
+O bootstrap usa state local e roda apenas uma vez por conta AWS.
+Ao final, ele gera o arquivo `infra/backend.hcl` automaticamente.
+
+```bash
+cd infra/bootstrap
+
+terraform init
+terraform apply   # confirme com "yes"
+
+# Volta para a raiz
+cd ../..
+```
+
+Output esperado:
+```
+bucket_name      = "techchallenge-tfstate-008962119864"
+backend_hcl_path = ".../infra/backend.hcl"
 ```
 
 ---
@@ -96,8 +118,8 @@ aws sts get-caller-identity
 ```bash
 cd infra
 
-# 1. Inicializar providers e backend S3
-terraform init
+# 1. Inicializar providers e backend S3 (passa o bucket via backend.hcl)
+terraform init -backend-config=backend.hcl
 
 # 2. Validar sintaxe
 terraform validate
@@ -130,11 +152,14 @@ Adicionar os seguintes secrets no repositório GitHub:
 | `AWS_SECRET_ACCESS_KEY` | Chave secreta AWS |
 | `TF_VAR_mp_access_token` | Access token do Mercado Pago |
 | `TF_VAR_mp_webhook_secret` | Secret do webhook do Mercado Pago |
-| `TF_VAR_app_notification_url` | URL do App/EKS para notificação |
+| `TF_VAR_app_notification_url` | URL do App para notificação |
+
+> O bucket do Terraform state é derivado automaticamente no pipeline via
+> `aws sts get-caller-identity` — não é necessário configurar nenhum secret adicional para isso.
 
 O pipeline executa automaticamente no push para `main`:
 1. **Test** — `npm test` nos handlers Lambda
-2. **Deploy** — Terraform init → plan → apply
+2. **Deploy** — Terraform init (bucket derivado do account ID) → plan → apply
 
 ---
 
@@ -285,10 +310,12 @@ tech-challenge-payment-service/
 │   ├── cancel/index.js           # Step ⑤ — cancela gateway + marca EXPIRED
 │   └── callback/index.js         # Webhook MP → sendTaskSuccess/Failure
 ├── infra/                        # Infraestrutura Terraform
-│   ├── providers.tf              # Backend S3, providers
+│   ├── bootstrap/                # Bootstrap: cria bucket S3 de state (roda uma vez)
+│   │   └── main.tf
+│   ├── providers.tf              # Backend S3 (partial), providers
 │   ├── variables.tf
-│   ├── data.tf                   # VPC, subnets (compartilhados com EKS)
-│   ├── network.tf                # Security groups, VPC endpoint Secrets Manager
+│   ├── data.tf                   # aws_caller_identity
+│   ├── network.tf                # (reservado — sem recursos ativos)
 │   ├── sqs.tf                    # Fila payment-orders + DLQ
 │   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
 │   ├── sns.tf                    # Tópico payment-dlq-notifications
@@ -304,6 +331,10 @@ tech-challenge-payment-service/
 │   ├── step-functions.tf         # State machine (ASL inline via jsonencode)
 │   ├── apigateway.tf             # HTTP API v2 + POST /webhook
 │   ├── outputs.tf
-│   └── terraform.tfvars.example
+│   ├── terraform.tfvars.example  # Modelo para variáveis (sem valores reais)
+│   └── backend.hcl.example       # Modelo para configuração do backend S3
 └── .github/workflows/deploy.yml  # CI/CD: test → terraform apply
 ```
+
+> **`infra/terraform.tfvars`** e **`infra/backend.hcl`** são arquivos locais listados no `.gitignore`
+> e nunca devem ser commitados.

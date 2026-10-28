@@ -57,9 +57,7 @@ exports.handler = async (event) => {
   const preference = await response.json();
 
   return {
-    Payload: {
-      preference_id: preference.id,
-      init_point: preference.init_point,
-    },
+    preference_id: preference.id,
+    init_point: preference.init_point,
   };
 };

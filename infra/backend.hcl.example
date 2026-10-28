@@ -1,0 +1,6 @@
+# Copie para backend.hcl e preencha com o account ID da sua conta AWS.
+# O arquivo backend.hcl está no .gitignore e nunca deve ser commitado.
+#
+# Para descobrir o account ID: aws sts get-caller-identity --query Account --output text
+
+bucket = "techchallenge-tfstate-<ACCOUNT_ID>"

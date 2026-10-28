@@ -1,6 +1,6 @@
 resource "aws_sfn_state_machine" "payment_saga" {
   name     = "payment-saga"
-  role_arn = aws_iam_role.step_functions.arn
+  role_arn = data.aws_iam_role.lab_role.arn
   type     = "STANDARD"
 
   definition = jsonencode({

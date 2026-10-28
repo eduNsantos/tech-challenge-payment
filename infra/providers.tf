@@ -16,8 +16,8 @@ terraform {
     }
   }
 
+  # bucket é passado via -backend-config=backend.hcl (local) ou -backend-config="bucket=..." (CI/CD)
   backend "s3" {
-    bucket       = "techchallenge-tfstate-477478162709"
     key          = "payment-service/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
