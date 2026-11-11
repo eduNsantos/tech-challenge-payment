@@ -17,28 +17,22 @@ headers {
 body:json {
   {
     "order_id": "{{$guid}}",
-    "amount_cents": 15000,
+    "amount_cents": 550,
     "currency": "BRL",
-    "description": "Pedido POS Tech Challenge",
+    "description": "POS Tech Challenge",
     "created_at": "{{$isoTimestamp}}",
     "customer": {
       "name": "João da Silva",
-      "email": "test_user_123456789@testuser.com",
+      "email": "comprador@example.com",
       "cpf": "52998224725",
       "phone": "+5511999999999"
     },
     "items": [
       {
         "id": "PROD-001",
-        "title": "Lanche Artesanal",
-        "quantity": 2,
-        "unit_price_cents": 5000
-      },
-      {
-        "id": "PROD-042",
-        "title": "Suco Natural 500ml",
+        "title": "Item",
         "quantity": 1,
-        "unit_price_cents": 5000
+        "unit_price_cents": 550
       }
     ],
     "metadata": {

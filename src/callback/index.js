@@ -33,8 +33,10 @@ function validateSignature(headers, body, secret) {
   const v1 = parts['v1'];
   if (!ts || !v1) return false;
 
-  const id = JSON.parse(body)?.id ?? '';
-  const manifest = `id:${id};request-id:${xRequestId ?? ''};ts:${ts};`;
+  // MP assina com data.id (resource ID), não com o notification id do topo do body
+  let dataId;
+  try { dataId = String(JSON.parse(body)?.data?.id ?? ''); } catch { dataId = ''; }
+  const manifest = `id:${dataId};request-id:${xRequestId ?? ''};ts:${ts};`;
   const expected = createHmac('sha256', secret).update(manifest).digest('hex');
 
   return expected === v1;
