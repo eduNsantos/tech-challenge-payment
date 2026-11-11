@@ -20,7 +20,7 @@ function validateCpf(cpf) {
 }
 
 exports.handler = async (event) => {
-  const { idempotency_key, order_id, amount_cents, currency, description, customer, items, metadata, created_at } = event;
+  const { idempotency_key, order_id, amount_cents, currency, description, customer, items, metadata, created_at, callback_url } = event;
 
   const total = items.reduce((sum, item) => sum + item.quantity * item.unit_price_cents, 0);
   if (total !== amount_cents) {
@@ -50,6 +50,7 @@ exports.handler = async (event) => {
       items,
       metadata: metadata ?? {},
       created_at,
+      callback_url: callback_url ?? null,
       status: 'PENDING',
       updated_at: new Date().toISOString(),
       expires_at: expiresAt,

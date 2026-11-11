@@ -1,0 +1,35 @@
+{
+  "name": "payment-service — production (us-east-1 / 008962119864)",
+  "values": [
+    {
+      "key": "webhook_url",
+      "value": "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook",
+      "enabled": true,
+      "type": "default"
+    },
+    {
+      "key": "sqs_url",
+      "value": "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders",
+      "enabled": true,
+      "type": "default"
+    },
+    {
+      "key": "dynamodb_table",
+      "value": "payment-saga-state",
+      "enabled": true,
+      "type": "default"
+    },
+    {
+      "key": "state_machine_arn",
+      "value": "arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga",
+      "enabled": true,
+      "type": "default"
+    },
+    {
+      "key": "mp_webhook_secret",
+      "value": "SUBSTITUIR — aws secretsmanager get-secret-value --secret-id payment/mp-webhook-secret --query SecretString --output text | jq -r .webhook_secret",
+      "enabled": true,
+      "type": "secret"
+    }
+  ]
+}

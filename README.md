@@ -10,23 +10,24 @@ Implementa o padrão **SAGA com Orquestração** usando AWS Step Functions + Mer
 ## Arquitetura
 
 ```
-App/EKS → SQS (payment-orders)
-              │
-              ▼
-         λ Trigger (poll SQS, concorrência máx. 5)
-              │
-              ▼
-         Step Functions — SAGA
-         ① REGISTRAR   → DynamoDB (PENDING)
-         ② GERAR LINK  → Mercado Pago API (retry 3× backoff)
-         ③ NOTIFICAR   → App + DynamoDB (WAITING_PAYMENT) + salva task token
-         ④ AGUARDAR    → WaitForTaskToken (heartbeat 30min, timeout 48h)
-         ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) → DLQ → SNS
+App/EKS → POST /orders → λ Orders → SQS (payment-orders)
+                                          │
+                                          ▼
+                                     λ Trigger (poll SQS, concorrência máx. 5)
+                                          │
+                                          ▼
+                                     Step Functions — SAGA
+                                     ① REGISTRAR   → DynamoDB (PENDING)
+                                     ② GERAR LINK  → Mercado Pago API (retry 3× backoff)
+                                     ③ NOTIFICAR   → App + DynamoDB (WAITING_PAYMENT) + salva task token
+                                     ④ AGUARDAR    → WaitForTaskToken (heartbeat 30min, timeout 48h)
+                                     ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) → DLQ → SNS
 
 Mercado Pago → POST /webhook → API Gateway → λ Callback
                                              → valida HMAC-SHA256
                                              → DynamoDB (PAID/REJECTED)
                                              → sendTaskSuccess/Failure
+                                             → POST callback_url (se presente)
 ```
 
 ---
@@ -134,12 +135,13 @@ terraform apply
 Ao final, o Terraform exibe os outputs:
 
 ```
+orders_url                 = "https://xxx.execute-api.us-east-1.amazonaws.com/orders"
 webhook_url                = "https://xxx.execute-api.us-east-1.amazonaws.com/webhook"
-payment_orders_queue_url   = "https://sqs.us-east-1.amazonaws.com/477478162709/payment-orders"
-payment_orders_queue_arn   = "arn:aws:sqs:us-east-1:477478162709:payment-orders"
-state_machine_arn          = "arn:aws:states:us-east-1:477478162709:stateMachine:payment-saga"
+payment_orders_queue_url   = "https://sqs.us-east-1.amazonaws.com/<account>/payment-orders"
+payment_orders_queue_arn   = "arn:aws:sqs:us-east-1:<account>:payment-orders"
+state_machine_arn          = "arn:aws:states:us-east-1:<account>:stateMachine:payment-saga"
 dynamodb_table_name        = "payment-saga-state"
-dlq_url                    = "https://sqs.us-east-1.amazonaws.com/477478162709/payment-orders-dlq"
+dlq_url                    = "https://sqs.us-east-1.amazonaws.com/<account>/payment-orders-dlq"
 ```
 
 ### Deploy via CI/CD (GitHub Actions)
@@ -179,34 +181,44 @@ Marcar os eventos: `Pagamentos`.
 
 ## Enviar uma ordem de pagamento
 
-O App/EKS envia uma mensagem para a fila SQS `payment-orders`. Formato:
+### Via HTTP — POST /orders (recomendado)
 
-```json
-{
-  "idempotency_key": "<sha256(order_id|amount_cents|created_at)>",
-  "order_id":        "<uuid-v4>",
-  "created_at":      "2026-10-28T14:32:00Z",
-  "amount_cents":    15000,
-  "currency":        "BRL",
-  "description":     "Pedido #4872",
-  "customer": {
-    "name":  "João da Silva",
-    "email": "joao@email.com",
-    "cpf":   "12345678901"
-  },
-  "items": [
-    { "id": "PROD-001", "title": "Lanche", "quantity": 2, "unit_price_cents": 7500 }
-  ]
-}
+O App/EKS envia a ordem via HTTP sem precisar de credenciais AWS:
+
+```bash
+curl -X POST "$(terraform -chdir=infra output -raw orders_url)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "order_id":    "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "amount_cents": 15000,
+    "currency":    "BRL",
+    "description": "Pedido #4872",
+    "customer": {
+      "name":  "João da Silva",
+      "email": "joao@email.com",
+      "cpf":   "12345678901"
+    },
+    "items": [
+      { "id": "PROD-001", "title": "Lanche", "quantity": 2, "unit_price_cents": 7500 }
+    ],
+    "callback_url": "https://sua-app.com/payments/callback"
+  }'
 ```
+
+Resposta `202 Accepted`:
+```json
+{ "idempotency_key": "<sha256-gerado>", "order_id": "f47ac10b-...", "status": "QUEUED" }
+```
+
+O campo `callback_url` é opcional. Quando presente, o payment-service faz `POST` para essa URL com o resultado final (`PAID` ou `REJECTED`) após o pagamento ser processado pelo Mercado Pago.
 
 > Documentação completa do schema: [`bruno/docs/sqs-message-schema.md`](bruno/docs/sqs-message-schema.md)
 
-### Envio manual via AWS CLI (teste)
+### Via SQS direto (alternativo — requer credenciais AWS)
 
 ```bash
 aws sqs send-message \
-  --queue-url "$(terraform output -raw payment_orders_queue_url)" \
+  --queue-url "$(terraform -chdir=infra output -raw payment_orders_queue_url)" \
   --message-body '{
     "idempotency_key": "a3f4b2c1d8e7f9004a5b6c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3",
     "order_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
@@ -218,6 +230,8 @@ aws sqs send-message \
     "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 15000}]
   }'
 ```
+
+> Ao enfileirar diretamente no SQS, o `idempotency_key` é **obrigatório** (gerado pelo produtor).
 
 ---
 
@@ -253,7 +267,7 @@ aws logs tail /aws/lambda/payment-trigger --follow
 
 ```bash
 aws logs tail /aws/lambda/payment-<nome> --follow
-# nomes: trigger, register, generate-link, notify-wait, cancel, callback
+# nomes: orders-api, trigger, register, generate-link, notify-wait, cancel, callback
 ```
 
 ### Execuções do Step Functions
@@ -303,12 +317,13 @@ tech-challenge-payment-service/
 │   └── webhook/
 ├── src/                          # Handlers Lambda (Node.js 24.x)
 │   ├── package.json
+│   ├── orders/index.js           # POST /orders → valida payload + enfileira no SQS
 │   ├── trigger/index.js          # Poll SQS → startExecution
 │   ├── register/index.js         # Step ① — valida + grava DynamoDB
 │   ├── generate-link/index.js    # Step ② — chama Mercado Pago
 │   ├── notify-wait/index.js      # Step ③/④ — notifica app + WaitForTaskToken
 │   ├── cancel/index.js           # Step ⑤ — cancela gateway + marca EXPIRED
-│   └── callback/index.js         # Webhook MP → sendTaskSuccess/Failure
+│   └── callback/index.js         # Webhook MP → sendTaskSuccess/Failure + callback_url
 ├── infra/                        # Infraestrutura Terraform
 │   ├── bootstrap/                # Bootstrap: cria bucket S3 de state (roda uma vez)
 │   │   └── main.tf
@@ -326,10 +341,11 @@ tech-challenge-payment-service/
 │   ├── lambda-register.tf
 │   ├── lambda-generate-link.tf
 │   ├── lambda-notify-wait.tf
+│   ├── lambda-orders.tf
 │   ├── lambda-cancel.tf
 │   ├── lambda-callback.tf
 │   ├── step-functions.tf         # State machine (ASL inline via jsonencode)
-│   ├── apigateway.tf             # HTTP API v2 + POST /webhook
+│   ├── apigateway.tf             # HTTP API v2 + POST /orders + POST /webhook
 │   ├── outputs.tf
 │   ├── terraform.tfvars.example  # Modelo para variáveis (sem valores reais)
 │   └── backend.hcl.example       # Modelo para configuração do backend S3

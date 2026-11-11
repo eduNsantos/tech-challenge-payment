@@ -1,4 +1,4 @@
-const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, GetItemCommand, UpdateItemCommand, QueryCommand } = require('@aws-sdk/client-dynamodb');
 const { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } = require('@aws-sdk/client-sfn');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { createHmac } = require('crypto');
@@ -90,14 +90,12 @@ exports.handler = async (event) => {
   const orderId = payment.external_reference;
   const status = payment.status;
 
-  // Busca o registro no DynamoDB pelo order_id (requer GSI ou scan — ajustar conforme necessidade)
-  // Alternativa simplificada: usa external_reference como idempotency_key prefix para lookup
-  const { Items } = await dynamo.send({
+  const { Items } = await dynamo.send(new QueryCommand({
     TableName: process.env.DYNAMODB_TABLE,
     IndexName: 'order_id-index',
     KeyConditionExpression: 'order_id = :oid',
     ExpressionAttributeValues: marshall({ ':oid': orderId }),
-  }).catch(() => ({ Items: [] }));
+  })).catch(() => ({ Items: [] }));
 
   const record = Items?.[0] ? unmarshall(Items[0]) : null;
   if (!record?.task_token) {
@@ -131,6 +129,37 @@ exports.handler = async (event) => {
       error: 'PaymentRejected',
       cause: `status=${status}, detail=${payment.status_detail}`,
     }));
+  }
+
+  if (record.callback_url) {
+    const callbackPayload = {
+      order_id:         record.order_id,
+      idempotency_key:  record.idempotency_key,
+      status:           newStatus,
+      amount_cents:     record.amount_cents,
+      currency:         record.currency,
+      description:      record.description,
+      customer:         record.customer,
+      items:            record.items,
+      payment_link:     record.payment_link ?? null,
+      mp_payment_id:    String(mpPaymentId),
+      created_at:       record.created_at,
+      updated_at:       new Date().toISOString(),
+      metadata:         record.metadata ?? {},
+    };
+
+    try {
+      const res = await fetch(record.callback_url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(callbackPayload),
+      });
+      if (!res.ok) {
+        console.warn(`callback_url retornou ${res.status} para order ${orderId}`);
+      }
+    } catch (err) {
+      console.warn(`Falha ao notificar callback_url para order ${orderId}: ${err.message}`);
+    }
   }
 
   return ok({ processed: true, status: newStatus });

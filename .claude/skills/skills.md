@@ -1,61 +1,43 @@
 # Skills — tech-challenge-payment-service
 
-Guia de habilidades e procedimentos para o Claude Code neste repositório de infraestrutura AWS (Terraform) do serviço de pagamento.
-
-> **CONTEXTO:** Este repositório provisiona a infraestrutura AWS do payment-service:
-> Lambdas (Node.js), API Gateway v2 (HTTP API), VPC compartilhada com o EKS,
-> Secrets Manager, IAM e backend de estado Terraform no S3.
-> Região padrão: **us-east-1**. Account ID: **477478162709**.
+Playbooks para o Claude Code neste repositório. O contexto completo do projeto está em `CLAUDE.md`.
 
 ---
 
 ## terraform-workflow
 
-Fluxo padrão para qualquer alteração de infraestrutura.
+Fluxo padrão para qualquer alteração de infraestrutura Terraform.
 
-**Quando usar:** toda vez que for criar, alterar ou destruir recursos AWS via Terraform.
+**Quando usar:** criar, alterar ou destruir recursos AWS via Terraform.
 
-**Passos obrigatórios (nesta ordem):**
-
-1. **Init** — inicializa providers e backend S3:
-   ```bash
-   terraform init -input=false -reconfigure -lock-timeout=5m
-   ```
-
-2. **Validate** — verifica erros de sintaxe antes de planejar:
-   ```bash
-   terraform validate
-   ```
-
-3. **Plan** — mostra o que será criado/alterado/destruído:
-   ```bash
-   terraform plan -out=tfplan -input=false -lock-timeout=5m
-   ```
-   > Revisar o output do plan com atenção. Nunca aplicar sem revisar.
-
-4. **Apply** — aplica apenas o plan gerado:
-   ```bash
-   terraform apply -input=false -lock-timeout=5m tfplan
-   ```
-
-5. **Outputs** — exibir endpoints e ARNs provisionados:
-   ```bash
-   terraform output
-   ```
-
-**Backend S3:**
-- Bucket: `techchallenge-tfstate-477478162709`
-- Key: `payment-service/terraform.tfstate`
-- Região: `us-east-1`
-- Criptografia: `encrypt = true`, `use_lockfile = true`
-
-**Variáveis de ambiente necessárias no CI:**
+**Pré-requisito:** exportar credenciais AWS no terminal:
+```bash
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_SESSION_TOKEN="..."        # apenas AWS Academy (credenciais temporárias)
+export AWS_DEFAULT_REGION="us-east-1"
 ```
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-TF_VAR_db_password
-TF_VAR_jwt_secret
+
+**Passos (dentro de `infra/`):**
+
+```bash
+# 1. Init com backend S3
+terraform init -backend-config=backend.hcl -reconfigure
+
+# 2. Validar sintaxe
+terraform validate
+
+# 3. Plan — revisar SEMPRE antes de aplicar
+terraform plan -out=tfplan
+
+# 4. Apply
+terraform apply tfplan
+
+# 5. Ver outputs (URLs, ARNs, etc.)
+terraform output
 ```
+
+**Nunca** usar `terraform apply -auto-approve` localmente — apenas em CI.
 
 ---
 
@@ -63,97 +45,51 @@ TF_VAR_jwt_secret
 
 Adiciona uma nova função Lambda ao payment-service.
 
-**Quando usar:** criar um novo handler de pagamento (ex: processar pagamento, webhook Mercado Pago, confirmação de pedido).
+**Quando usar:** criar um novo handler (ex: status de pagamento, reprocessamento, etc.).
 
-**Checklist (nesta ordem):**
+**Constraint obrigatório:** AWS Academy bloqueia `iam:CreateRole`. Usar sempre `data.aws_iam_role.lab_role.arn` como role (já declarado em `infra/iam.tf`).
 
-- [ ] Criar o código da função em `src/{nome-da-funcao}/index.js` (ou `handler.ts` se TypeScript)
-- [ ] Adicionar dependências ao `src/package.json` se necessário
-- [ ] Criar arquivo Terraform `{nome}.tf` com os recursos abaixo:
+**Checklist:**
 
-### Template Terraform para nova Lambda
+- [ ] Criar `src/{nome}/index.js` com `exports.handler = async (event) => {...}`
+- [ ] Se precisar de dependências além das já instaladas, adicionar em `src/package.json`
+- [ ] Criar `infra/lambda-{nome}.tf` com o template abaixo
+- [ ] Rodar `terraform-workflow` completo
+
+**Template `infra/lambda-{nome}.tf`:**
 
 ```hcl
-# Build / package
-resource "null_resource" "{nome}_lambda_deps" {
-  triggers = {
-    package_lock = filemd5("${path.module}/src/package-lock.json")
-  }
-
-  provisioner "local-exec" {
-    command     = "cd ${path.module}/src && npm ci --no-fund --no-audit"
-    interpreter = ["bash", "-c"]
-  }
-}
-
-data "archive_file" "{nome}_lambda" {
-  type        = "zip"
-  source_dir  = "${path.module}/src/{nome-da-funcao}"
-  output_path = "${path.module}/build/{nome-da-funcao}.zip"
-  depends_on  = [null_resource.{nome}_lambda_deps]
-}
-
-# IAM
-resource "aws_iam_role" "{nome}_lambda" {
-  name               = "payment-{nome}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
-}
-
-resource "aws_iam_role_policy_attachment" "{nome}_vpc_access" {
-  role       = aws_iam_role.{nome}_lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# Lambda Function
 resource "aws_lambda_function" "{nome}" {
   function_name    = "payment-{nome}"
-  role             = aws_iam_role.{nome}_lambda.arn
+  role             = data.aws_iam_role.lab_role.arn   # LabRole — AWS Academy
   runtime          = "nodejs24.x"
-  handler          = "index.handler"
-  filename         = data.archive_file.{nome}_lambda.output_path
-  source_code_hash = data.archive_file.{nome}_lambda.output_base64sha256
-  timeout          = 10
+  handler          = "{nome}/index.handler"
+  filename         = data.archive_file.payment_lambdas.output_path
+  source_code_hash = data.archive_file.payment_lambdas.output_base64sha256
+  timeout          = 15
   memory_size      = 256
-
-  vpc_config {
-    subnet_ids         = [data.aws_subnet.sub_a.id, data.aws_subnet.sub_b.id]
-    security_group_ids = [aws_security_group.lambda.id]
-  }
 
   environment {
     variables = {
-      SECRET_ID = aws_secretsmanager_secret.{nome}_lambda.name
-      DB_HOST   = data.aws_db_instance.main.address
-      DB_PORT   = tostring(data.aws_db_instance.main.port)
-      DB_NAME   = var.db_name
+      DYNAMODB_TABLE = aws_dynamodb_table.payment_saga.name
+      # adicionar outras vars conforme necessário
     }
   }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.{nome}_vpc_access,
-  ]
 }
 ```
 
-**Recursos de rede (reutilizar do `data.tf` ou `network.tf`):**
-- Subnets: `data.aws_subnet.sub_a`, `data.aws_subnet.sub_b`
-- Security group: `aws_security_group.lambda`
+> O arquivo ZIP é compartilhado — gerado em `infra/lambda-build.tf` via `archive_file.payment_lambdas`.
+> O novo handler é incluído automaticamente porque `source_dir = "${path.module}/../src"`.
 
-**Após criar a Lambda:**
-- [ ] Adicionar rota no API Gateway (ver skill `add-apigateway-route`)
-- [ ] Adicionar secret se necessário (ver skill `add-secret`)
-- [ ] Atualizar `output.tf` com o invoke_arn ou endpoint
-- [ ] Rodar o `terraform-workflow` completo
+**Se a Lambda for exposta via API Gateway**, ver skill `add-apigateway-route`.
 
 ---
 
 ## add-apigateway-route
 
-Adiciona uma nova rota ao API Gateway v2 (HTTP API) do payment-service.
+Adiciona nova rota ao API Gateway v2 HTTP existente (`aws_apigatewayv2_api.payment`).
 
-**Quando usar:** expor um novo endpoint HTTP da Lambda via API Gateway.
-
-**Template Terraform:**
+**Quando usar:** expor novo endpoint HTTP da Lambda via API Gateway.
 
 ```hcl
 resource "aws_apigatewayv2_integration" "{nome}" {
@@ -163,9 +99,9 @@ resource "aws_apigatewayv2_integration" "{nome}" {
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_route" "{nome}_{metodo}" {
+resource "aws_apigatewayv2_route" "{nome}" {
   api_id    = aws_apigatewayv2_api.payment.id
-  route_key = "{METODO} /{path}"          # ex: "POST /payment", "GET /payment/{id}"
+  route_key = "POST /{path}"   # ex: "GET /payment/{id}"
   target    = "integrations/${aws_apigatewayv2_integration.{nome}.id}"
 }
 
@@ -178,313 +114,414 @@ resource "aws_lambda_permission" "apigateway_{nome}" {
 }
 ```
 
-**Padrões de `route_key`:**
-| Operação                | route_key                  |
-|-------------------------|----------------------------|
-| Processar pagamento      | `POST /payment`            |
-| Consultar status         | `GET /payment/{id}`        |
-| Webhook externo          | `POST /webhook/mercadopago`|
-| Cancelar pagamento       | `DELETE /payment/{id}`     |
-
-**Após adicionar a rota:**
-- [ ] Verificar `aws_apigatewayv2_stage` com `auto_deploy = true` (não requer novo deploy manual)
-- [ ] Capturar o endpoint no `output.tf`
-- [ ] Testar com `curl` o endpoint do stage após o `terraform apply`
-
----
-
-## add-secret
-
-Cria ou atualiza um secret no AWS Secrets Manager via Terraform.
-
-**Quando usar:** armazenar credenciais sensíveis (chave de API do gateway de pagamento, senhas, tokens).
-
-**Template Terraform:**
-
-```hcl
-resource "aws_secretsmanager_secret" "{nome}" {
-  name                    = "payment/{nome}"
-  recovery_window_in_days = 0   # 0 = delete imediato (útil em dev/staging)
-}
-
-resource "aws_secretsmanager_secret_version" "{nome}" {
-  secret_id = aws_secretsmanager_secret.{nome}.id
-  secret_string = jsonencode({
-    CHAVE_1 = var.{nome}_chave_1
-    CHAVE_2 = var.{nome}_chave_2
-  })
-}
-```
-
-**Adicionar variável correspondente em `variables.tf`:**
-```hcl
-variable "{nome}_chave_1" {
-  type      = string
-  sensitive = true
-}
-```
-
-**Dar acesso à Lambda no IAM (em `lambda.tf` ou no arquivo da Lambda):**
-```hcl
-data "aws_iam_policy_document" "{nome}_secrets_access" {
-  statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.{nome}.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "{nome}_secrets_access" {
-  name   = "payment-{nome}-secrets-access"
-  role   = aws_iam_role.{nome}_lambda.id
-  policy = data.aws_iam_policy_document.{nome}_secrets_access.json
-}
-```
-
-**Injetar o nome do secret na Lambda via environment:**
-```hcl
-environment {
-  variables = {
-    SECRET_ID = aws_secretsmanager_secret.{nome}.name
-  }
-}
-```
+O stage `$default` tem `auto_deploy = true` — sem redeploy manual após `terraform apply`.
 
 ---
 
 ## aws-ops
 
-Operações comuns de diagnóstico e inspeção dos recursos AWS do payment-service.
+Diagnóstico e inspeção dos recursos AWS do payment-service.
 
-**Quando usar:** depurar erros, verificar estado de recursos, consultar logs.
-
-### Credenciais e contexto
+### Identidade e contexto
 
 ```bash
-# Verificar identidade AWS ativa
 aws sts get-caller-identity
 
 # Listar Lambdas do payment-service
 aws lambda list-functions \
-  --query 'Functions[?starts_with(FunctionName, `payment`)].{Nome:FunctionName,Runtime:Runtime,Memoria:MemorySize}' \
+  --query 'Functions[?starts_with(FunctionName, `payment`)].{Nome:FunctionName,Timeout:Timeout}' \
   --output table
-
-# Verificar estado do Terraform
-terraform show
-terraform state list
 ```
 
 ### Logs das Lambdas
 
+Nomes: `payment-trigger`, `payment-register`, `payment-generate-link`, `payment-notify-wait`, `payment-cancel`, `payment-callback`
+
 ```bash
-# Últimas invocações de uma Lambda (substituir {nome})
+# Stream ao vivo
 aws logs tail /aws/lambda/payment-{nome} --follow
 
-# Buscar erros nos logs
+# Buscar erros
 aws logs filter-log-events \
   --log-group-name /aws/lambda/payment-{nome} \
   --filter-pattern "ERROR"
-
-# Últimas 100 linhas
-aws logs get-log-events \
-  --log-group-name /aws/lambda/payment-{nome} \
-  --log-stream-name $(aws logs describe-log-streams \
-      --log-group-name /aws/lambda/payment-{nome} \
-      --order-by LastEventTime --descending \
-      --max-items 1 \
-      --query 'logStreams[0].logStreamName' --output text) \
-  --limit 100
 ```
 
-### API Gateway
+### Step Functions
 
 ```bash
-# Listar APIs do payment-service
-aws apigatewayv2 get-apis \
-  --query 'Items[?contains(Name, `payment`)].{Id:ApiId,Nome:Name,Endpoint:ApiEndpoint}' \
+# Listar execuções
+aws stepfunctions list-executions \
+  --state-machine-arn "$(cd infra && terraform output -raw state_machine_arn)" \
+  --query 'executions[*].{name:name,status:status,start:startDate}' \
   --output table
 
-# Listar rotas de uma API específica
-aws apigatewayv2 get-routes --api-id {API_ID}
+# Detalhar execução específica
+aws stepfunctions describe-execution \
+  --execution-arn "arn:aws:states:us-east-1:477478162709:execution:payment-saga:{idempotency_key}"
 ```
 
-### Invocar Lambda manualmente
+### DynamoDB — verificar estado de uma saga
 
 ```bash
-# Invocar e ver resposta
-aws lambda invoke \
-  --function-name payment-{nome} \
-  --payload '{"body": "{\"amount\": 100}"}' \
-  --cli-binary-format raw-in-base64-out \
-  response.json && cat response.json
+aws dynamodb get-item \
+  --table-name payment-saga-state \
+  --key '{"idempotency_key": {"S": "{chave}"}}' \
+  --output json | jq '.Item | {status: .status.S, order_id: .order_id.S, updated_at: .updated_at.S}'
+```
+
+### SQS — enviar mensagem de teste
+
+```bash
+aws sqs send-message \
+  --queue-url "$(cd infra && terraform output -raw payment_orders_queue_url)" \
+  --message-body '{
+    "idempotency_key": "aabbcc112233aabbcc112233aabbcc112233aabbcc112233aabbcc1122334455",
+    "order_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "created_at": "2026-01-01T00:00:00Z",
+    "amount_cents": 15000,
+    "currency": "BRL",
+    "description": "Pedido de teste",
+    "customer": {"name": "Teste", "email": "teste@email.com", "cpf": "52998224725"},
+    "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 15000}],
+    "callback_url": "https://app.example.com/payments/webhook/result"
+  }'
+
+# callback_url é opcional — quando presente, o payment-service faz POST para essa URL
+# com o resultado final (PAID/REJECTED) após receber o webhook do Mercado Pago.
+```
+
+### DLQ — ver mensagens com falha
+
+```bash
+aws sqs receive-message \
+  --queue-url "$(cd infra && terraform output -raw dlq_url)" \
+  --max-number-of-messages 10 \
+  --output json | jq '.Messages[].Body | fromjson | {order_id, status, error}'
 ```
 
 ### Secrets Manager
 
 ```bash
-# Listar secrets do payment-service
-aws secretsmanager list-secrets \
-  --query 'SecretList[?starts_with(Name, `payment`)].Name' \
-  --output table
-
-# Ver valor de um secret (cuidado em produção)
+# Ver access token do Mercado Pago
 aws secretsmanager get-secret-value \
-  --secret-id payment/{nome} \
-  --query SecretString \
-  --output text | jq .
+  --secret-id payment/mp-access-token \
+  --query SecretString --output text | jq .
+
+# Ver webhook secret
+aws secretsmanager get-secret-value \
+  --secret-id payment/mp-webhook-secret \
+  --query SecretString --output text | jq .
 ```
 
 ---
 
-## terraform-destroy
+## test-full-flow
 
-Destrói recursos Terraform de forma segura.
+Suíte de testes completa do payment-service cobrindo toda a SAGA.
 
-**Quando usar:** remover infraestrutura de ambiente de teste ou recurso específico que não é mais necessário.
+**Quando usar:** validar o serviço após deploy ou alteração de código. Cobre SQS → Step Functions → DynamoDB → Webhook.
 
-> **ATENÇÃO:** Nunca rodar `terraform destroy` sem revisar o plan de destruição antes.
-> Recursos como Secrets Manager com `recovery_window_in_days = 0` são **imediatamente deletados**.
-
-### Destruir recurso específico
-
-```bash
-# Ver o que seria destruído
-terraform plan -destroy -target=aws_lambda_function.{nome}
-
-# Destruir apenas aquele recurso
-terraform destroy -target=aws_lambda_function.{nome} -auto-approve
+**Ambiente implantado (account 008962119864, us-east-1):**
+```
+SQS URL   : https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders
+DLQ URL   : https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders-dlq
+DynamoDB  : payment-saga-state
+SM Arn    : arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga
+Webhook   : https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook
 ```
 
-### Destruir tudo (ambiente completo)
-
+**Pré-requisito — credenciais AWS:**
 ```bash
-# REVISÃO OBRIGATÓRIA antes de confirmar
-terraform plan -destroy
-
-# Só executar após revisão cuidadosa
-terraform destroy -auto-approve
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_SESSION_TOKEN="..."
+export AWS_DEFAULT_REGION="us-east-1"
 ```
 
-### Remover recurso do state sem destruir o recurso real na AWS
+---
+
+### Como gerar o idempotency_key
+
+O `idempotency_key` é SHA-256 de `order_id|amount_cents|created_at` (pipe literal):
+```bash
+echo -n "f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z" | sha256sum
+# ou em Node.js
+node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z').digest('hex'))"
+```
+
+### CPF de teste válido (algoritmo Receita Federal)
+
+`52998224725` — validado. Use sempre este nas mensagens de teste.
+
+---
+
+### Cenário 1 — Fluxo feliz (SQS → PENDING → WAITING_PAYMENT)
 
 ```bash
-# Útil quando o recurso foi criado fora do Terraform ou vai ser importado
-terraform state rm aws_lambda_function.{nome}
+# 1. Gerar chave de idempotência
+IKEY=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z').digest('hex'))")
+
+# 2. Enviar mensagem à fila
+aws sqs send-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders" \
+  --message-body "{
+    \"idempotency_key\": \"$IKEY\",
+    \"order_id\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\",
+    \"created_at\": \"2026-11-10T10:00:00Z\",
+    \"amount_cents\": 15000,
+    \"currency\": \"BRL\",
+    \"description\": \"Teste SAGA — Lanche + Suco\",
+    \"customer\": {\"name\": \"João da Silva\", \"email\": \"joao.silva@email.com\", \"cpf\": \"52998224725\", \"phone\": \"+5511999999999\"},
+    \"items\": [{\"id\": \"PROD-001\", \"title\": \"Lanche Artesanal\", \"quantity\": 2, \"unit_price_cents\": 5000}, {\"id\": \"PROD-042\", \"title\": \"Suco Natural 500ml\", \"quantity\": 1, \"unit_price_cents\": 5000}],
+    \"metadata\": {\"source_service\": \"pos-application\"},
+    \"callback_url\": \"https://webhook.site/SUBSTITUA-UUID-AQUI\"
+  }"
+
+# 3. Aguardar ~10s e verificar DynamoDB
+sleep 10
+aws dynamodb get-item \
+  --table-name payment-saga-state \
+  --key "{\"idempotency_key\": {\"S\": \"$IKEY\"}}" \
+  --output json | jq '.Item | {status:.status.S, order_id:.order_id.S, payment_link:.payment_link.S}'
+# Esperado: status = "WAITING_PAYMENT", payment_link preenchido
+```
+
+---
+
+### Cenário 2 — CPF inválido (Step ① aborta)
+
+```bash
+# CPF com dígito errado → validateCpf() retorna false → erro InvalidCPF → SAGA falha
+IKEY2=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('aaaabbbb-0000-1111-2222-333344445555|5000|2026-11-10T11:00:00Z').digest('hex'))")
+aws sqs send-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders" \
+  --message-body "{\"idempotency_key\":\"$IKEY2\",\"order_id\":\"aaaabbbb-0000-1111-2222-333344445555\",\"created_at\":\"2026-11-10T11:00:00Z\",\"amount_cents\":5000,\"currency\":\"BRL\",\"description\":\"Teste CPF inválido\",\"customer\":{\"name\":\"Teste\",\"email\":\"t@t.com\",\"cpf\":\"00000000000\"},\"items\":[{\"id\":\"X\",\"title\":\"Item\",\"quantity\":1,\"unit_price_cents\":5000}]}"
+# Step Functions vai para FAILED — verificar na console ou:
+aws stepfunctions list-executions \
+  --state-machine-arn "arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga" \
+  --status-filter FAILED --max-results 3 --output table
+```
+
+---
+
+### Cenário 3 — amount_cents inconsistente (Step ① aborta)
+
+```bash
+# items somam 10000, amount_cents = 15000 → ValidationError
+IKEY3=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('ccccdddd-0000-1111-2222-333344445555|15000|2026-11-10T12:00:00Z').digest('hex'))")
+aws sqs send-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders" \
+  --message-body "{\"idempotency_key\":\"$IKEY3\",\"order_id\":\"ccccdddd-0000-1111-2222-333344445555\",\"created_at\":\"2026-11-10T12:00:00Z\",\"amount_cents\":15000,\"currency\":\"BRL\",\"description\":\"Teste valor errado\",\"customer\":{\"name\":\"Teste\",\"email\":\"t@t.com\",\"cpf\":\"52998224725\"},\"items\":[{\"id\":\"X\",\"title\":\"Item\",\"quantity\":1,\"unit_price_cents\":10000}]}"
+```
+
+---
+
+### Cenário 4 — Idempotência (mensagem duplicada)
+
+```bash
+# Reenviar a mesma mensagem do Cenário 1 (mesmo IKEY)
+# DynamoDB: ConditionExpression attribute_not_exists(idempotency_key) → falha silenciosa
+# Step Functions: já existe execução com esse name → rejeita (ExecutionAlreadyExists)
+aws sqs send-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders" \
+  --message-body "{\"idempotency_key\":\"$IKEY\", ...mesmo payload do cenário 1...}"
+# Verificar: DynamoDB continua com mesmo status, nenhuma nova execução criada
+```
+
+---
+
+### Cenário 5 — Webhook com assinatura inválida (401)
+
+```bash
+curl -s -w "\n%{http_code}" -X POST \
+  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  -H "Content-Type: application/json" \
+  -H "x-signature: ts=1234567890,v1=assinaturainvalida" \
+  -H "x-request-id: req-test-invalid" \
+  -d '{"type":"payment","data":{"id":"12345678"}}'
+# Esperado: 401 {"message":"Assinatura invalida"}
+```
+
+---
+
+### Cenário 6 — Webhook com assinatura válida (PAID)
+
+Usar o script `scripts/test-saga-flow.js` que calcula o HMAC automaticamente:
+```bash
+cd /Applications/XAMPP/xamppfiles/htdocs/pos/tech-challenge-payment-service
+node scripts/test-saga-flow.js --scenario webhook-approved --mp-payment-id 98765432
+```
+
+A assinatura HMAC-SHA256 é calculada assim:
+```js
+const { createHmac } = require('crypto');
+const ts    = Math.floor(Date.now() / 1000).toString();
+const id    = "98765432";           // mp payment id
+const reqId = "req-test-001";
+const manifest = `id:${id};request-id:${reqId};ts:${ts};`;
+const v1 = createHmac('sha256', webhookSecret).update(manifest).digest('hex');
+// Header: x-signature: ts=<ts>,v1=<v1>
+```
+
+O `webhookSecret` vem do Secrets Manager:
+```bash
+aws secretsmanager get-secret-value --secret-id payment/mp-webhook-secret \
+  --query SecretString --output text | jq -r .webhook_secret
+```
+
+---
+
+### Cenário 7 — Webhook tipo não-payment (ignorado)
+
+```bash
+curl -s -X POST \
+  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  -H "Content-Type: application/json" \
+  -H "x-signature: ts=<ts>,v1=<hmac_valido>" \
+  -H "x-request-id: req-test-ping" \
+  -d '{"type":"merchant_order","data":{"id":"999"}}'
+# Esperado: 200 {"ignored":true}
+```
+
+---
+
+### Monitoramento pós-teste
+
+```bash
+# Listar últimas execuções da SAGA
+aws stepfunctions list-executions \
+  --state-machine-arn "arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga" \
+  --max-results 10 \
+  --query 'executions[*].{name:name,status:status,start:startDate}' \
+  --output table
+
+# Logs da Lambda callback (webhook)
+aws logs tail /aws/lambda/payment-callback --follow
+
+# Logs do trigger SQS
+aws logs tail /aws/lambda/payment-trigger --follow
+
+# DLQ — verificar mensagens com falha
+aws sqs receive-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders-dlq" \
+  --max-number-of-messages 10 --output json
+```
+
+---
+
+### Collection Postman (webhook)
+
+Localização: `postman/collections/payment-service-tests.json`
+Ambiente: `postman/environments/production.json`
+
+```bash
+# Instalar Postman CLI se não tiver
+npm install -g @postman/cli
+
+# Executar collection completa
+postman collection run postman/collections/payment-service-tests.json \
+  -e postman/environments/production.json
+```
+
+> A collection inclui pre-request scripts que calculam o HMAC-SHA256 automaticamente.
+> Configure a variável `mp_webhook_secret` no ambiente antes de rodar.
+
+---
+
+## test-webhook
+
+Simula callbacks do Mercado Pago — atalho rápido para o cenário de webhook apenas.
+
+**Ver skill `test-full-flow` para cenários completos.**
+
+**Via script Node.js (recomendado — calcula HMAC automaticamente):**
+```bash
+node scripts/test-saga-flow.js --scenario webhook-approved --mp-payment-id 98765432
+node scripts/test-saga-flow.js --scenario webhook-rejected --mp-payment-id 98765433
+```
+
+**Via curl (manual — requer HMAC pré-calculado):**
+```bash
+SECRET=$(aws secretsmanager get-secret-value --secret-id payment/mp-webhook-secret \
+  --query SecretString --output text | jq -r .webhook_secret)
+TS=$(date +%s)
+ID="98765432"
+REQ_ID="req-manual-$(date +%s)"
+MANIFEST="id:${ID};request-id:${REQ_ID};ts:${TS};"
+HMAC=$(echo -n "$MANIFEST" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+
+curl -s -w "\n%{http_code}" -X POST \
+  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  -H "Content-Type: application/json" \
+  -H "x-signature: ts=${TS},v1=${HMAC}" \
+  -H "x-request-id: ${REQ_ID}" \
+  -d "{\"type\":\"payment\",\"data\":{\"id\":\"${ID}\"}}"
 ```
 
 ---
 
 ## deploy
 
-Fluxo completo de deploy do payment-service via GitHub Actions.
+Fluxo de deploy e CI/CD.
 
-**Quando usar:** entender ou reproduzir manualmente o pipeline de CI/CD.
-
-### Pipeline GitHub Actions (`.github/workflows/deploy.yml`)
-
-```
-push → main
-  └── terraform (init + apply)
-        └── deploy-lambda (empacota e faz upload das Lambdas)
-```
-
-**Secrets necessários no repositório GitHub:**
-| Secret                    | Descrição                              |
-|---------------------------|----------------------------------------|
-| `AWS_ACCESS_KEY_ID`       | Chave de acesso AWS                    |
-| `AWS_SECRET_ACCESS_KEY`   | Chave secreta AWS                      |
-| `DB_PASSWORD`             | Senha do banco de dados                |
-| `JWT_SECRET`              | Chave JWT (se aplicável)               |
-| `MERCADOPAGO_ACCESS_TOKEN`| Token do gateway de pagamento          |
-
-### Disparar deploy manual
+### Deploy local completo
 
 ```bash
-# Via GitHub CLI — deploy da branch main
+cd infra
+terraform init -backend-config=backend.hcl
+terraform plan -out=tfplan
+terraform apply tfplan
+terraform output
+```
+
+### Deploy via GitHub Actions
+
+Secrets necessários no repositório:
+```
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+TF_VAR_mp_access_token       # Token do Mercado Pago
+TF_VAR_mp_webhook_secret     # Secret do webhook MP
+TF_VAR_app_notification_url  # URL do App para receber o link de pagamento
+```
+
+O bucket de state é derivado automaticamente no CI via `aws sts get-caller-identity`.
+
+```bash
+# Disparar deploy manual via GitHub CLI
 gh workflow run deploy.yml --ref main
 
-# Com parâmetro de tag de imagem (se aplicável)
-gh workflow run deploy.yml --ref main -f image_tag=v1.2.3
-
-# Verificar status do workflow
+# Verificar status
 gh run list --workflow=deploy.yml --limit 5
-
-# Ver logs do último run
 gh run view --log
 ```
 
-### Estrutura esperada do repositório após scaffold
+### Pós-deploy obrigatório
 
-```
-tech-challenge-payment-service/
-├── src/
-│   ├── package.json
-│   ├── package-lock.json
-│   └── {nome-da-funcao}/
-│       └── index.js
-├── build/                    # gerado pelo Terraform (gitignore)
-├── providers.tf
-├── variables.tf
-├── output.tf
-├── network.tf                # data sources da VPC/subnets do EKS
-├── security-groups.tf
-├── lambda.tf
-├── apigateway.tf
-├── secrets.tf
-├── .terraform.lock.hcl
-├── .github/
-│   └── workflows/
-│       └── deploy.yml
-└── .gitignore
-```
+Após o primeiro deploy, configurar a URL do webhook no painel do Mercado Pago:
+- **Painel MP > Configurações > Notificações > URL de notificações**
+- Valor: `terraform output -raw webhook_url`
+- Eventos: `Pagamentos`
 
 ---
 
-## scaffold-payment-service
+## destroy
 
-Cria o scaffold completo do repositório payment-service do zero.
+Destrói recursos Terraform com segurança.
 
-**Quando usar:** o repositório está vazio e precisa ser inicializado com toda a estrutura Terraform + Lambda.
+> **ATENÇÃO:** `recovery_window_in_days = 30` nos Secrets Manager — para destruir e recriar imediatamente, restaurar antes:
+> ```bash
+> aws secretsmanager restore-secret --secret-id payment/mp-access-token
+> aws secretsmanager restore-secret --secret-id payment/mp-webhook-secret
+> ```
 
-**Checklist completo:**
+```bash
+# Destruir recurso específico
+terraform plan -destroy -target=aws_lambda_function.{nome}
+terraform destroy -target=aws_lambda_function.{nome}
 
-- [ ] Criar `providers.tf` com backend S3 (`key = "payment-service/terraform.tfstate"`)
-- [ ] Criar `variables.tf` com variáveis padrão (region, db_name, db_user, db_password)
-- [ ] Criar `network.tf` com data sources para VPC, subnets e RDS do projeto EKS principal
-- [ ] Criar `security-groups.tf` com security group para as Lambdas
-- [ ] Criar `apigateway.tf` com o `aws_apigatewayv2_api` principal e o stage `$default`
-- [ ] Criar `lambda.tf` com a primeira Lambda (ex: `payment-process`)
-- [ ] Criar `secrets.tf` com o secret do gateway de pagamento
-- [ ] Criar `output.tf` com o endpoint da API
-- [ ] Criar `src/package.json` e `src/{nome}/index.js`
-- [ ] Criar `.github/workflows/deploy.yml`
-- [ ] Criar `.gitignore` (ignorar `build/`, `.terraform/`, `*.tfstate`, `*.tfplan`)
-- [ ] Rodar `terraform init` para gerar `.terraform.lock.hcl`
-- [ ] Commit inicial
-
-**Data sources compartilhados (referências ao stack do EKS em `network.tf`):**
-```hcl
-data "aws_vpc" "main" {
-  filter {
-    name   = "tag:Name"
-    values = ["main"]
-  }
-}
-
-data "aws_subnet" "sub_a" {
-  filter {
-    name   = "tag:Name"
-    values = ["sub_a"]
-  }
-}
-
-data "aws_subnet" "sub_b" {
-  filter {
-    name   = "tag:Name"
-    values = ["sub_b"]
-  }
-}
-
-data "aws_db_instance" "main" {
-  db_instance_identifier = "main"
-}
+# Destruir tudo — revisar o plan antes de confirmar
+terraform plan -destroy
+terraform destroy
 ```

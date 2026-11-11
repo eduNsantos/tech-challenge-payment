@@ -3,6 +3,11 @@ output "webhook_url" {
   value       = "${aws_apigatewayv2_stage.default.invoke_url}webhook"
 }
 
+output "orders_url" {
+  description = "URL do endpoint de criação de ordens (POST /orders) para o App/EKS"
+  value       = "${aws_apigatewayv2_stage.default.invoke_url}orders"
+}
+
 output "payment_orders_queue_url" {
   description = "URL da fila SQS payment-orders para o App/EKS enfileirar ordens"
   value       = aws_sqs_queue.payment_orders.url

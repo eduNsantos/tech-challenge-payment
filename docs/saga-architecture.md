@@ -10,13 +10,14 @@ O payment-service implementa o padrão **SAGA com Orquestração** usando AWS St
 
 | Componente | Tecnologia | Papel |
 |---|---|---|
-| Fila de entrada | SQS Standard | Recebe ordens do App/EKS |
+| **Endpoint HTTP** | API Gateway v2 + Lambda Orders | Recebe ordens do App/EKS via `POST /orders` e enfileira no SQS |
+| Fila de entrada | SQS Standard | Desacopla o App/EKS do processamento da SAGA |
 | Lambda Trigger | Node.js 24.x | Polls SQS, inicia execução no Step Functions (máx. 5 simultâneas) |
 | Orquestrador | AWS Step Functions | Executa os 5 passos da SAGA |
 | Estado | DynamoDB | Log de estado e transições de cada saga |
 | Dead-letter | SQS DLQ | Recebe sagas que falharam definitivamente |
 | Notificação | SNS | Notifica serviço externo quando mensagem vai para DLQ |
-| Webhook | API Gateway v2 + Lambda Callback | Recebe callbacks do Mercado Pago |
+| Webhook | API Gateway v2 + Lambda Callback | Recebe callbacks do Mercado Pago e notifica App via `callback_url` |
 
 ---
 
@@ -77,6 +78,29 @@ O payment-service implementa o padrão **SAGA com Orquestração** usando AWS St
 
 ---
 
+## Entrada de ordens — POST /orders
+
+O App/EKS submete ordens via HTTP sem necessitar de credenciais AWS:
+
+```
+App/EKS
+    │
+    │  POST /orders  (JSON com order_id, amount_cents, customer, items, callback_url?)
+    ▼
+API Gateway v2
+    │
+    ▼
+Lambda Orders
+    │
+    ├── 1. Valida campos obrigatórios (order_id, amount_cents, currency, customer, items)
+    ├── 2. Gera idempotency_key = SHA-256(order_id|amount_cents|created_at) se ausente
+    └── 3. Enfileira mensagem no SQS → retorna 202 { idempotency_key, order_id, status: "QUEUED" }
+```
+
+O campo `callback_url` (opcional) define para onde o payment-service enviará o resultado final após o pagamento ser processado pelo Mercado Pago.
+
+---
+
 ## Fluxo de Callback
 
 Entrada independente do fluxo principal da SAGA:
@@ -93,8 +117,9 @@ Lambda Callback
     │
     ├── 1. Valida x-signature (HMAC-SHA256 com secret do Secrets Manager)
     ├── 2. Busca detalhes do pagamento na API do Mercado Pago via data.id
-    ├── 3. Atualiza DynamoDB com status final
-    └── 4. sendTaskSuccess / sendTaskFailure → resolve WaitForTaskToken (Step ④)
+    ├── 3. Atualiza DynamoDB com status final (PAID ou REJECTED)
+    ├── 4. sendTaskSuccess / sendTaskFailure → resolve WaitForTaskToken (Step ④)
+    └── 5. Se callback_url presente → POST com payload completo do DynamoDB (best-effort)
 ```
 
 ### Validação do x-signature
@@ -121,13 +146,13 @@ O `idempotency_key` é o mecanismo central de idempotência e serve três propó
 | Step Functions | `name` da execução — SF rejeita execuções com nome duplicado nativamente |
 | Mercado Pago | Campo `external_reference` — identifica o pedido no gateway e concilia o callback |
 
-### Geração (responsabilidade do produtor)
+### Geração
 
 ```
 idempotency_key = SHA-256( order_id + "|" + amount_cents + "|" + created_at )
 ```
 
-O hash é gerado pelo serviço de origem (App/EKS) antes de enfileirar no SQS.
+Ao usar `POST /orders`, o Lambda `payment-orders-api` gera o hash automaticamente se o campo estiver ausente. Ao enfileirar diretamente no SQS, o campo é obrigatório e deve ser gerado pelo produtor.
 
 ---
 

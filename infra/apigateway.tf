@@ -21,3 +21,16 @@ resource "aws_apigatewayv2_route" "webhook" {
   route_key = "POST /webhook"
   target    = "integrations/${aws_apigatewayv2_integration.callback.id}"
 }
+
+resource "aws_apigatewayv2_integration" "orders" {
+  api_id                 = aws_apigatewayv2_api.payment.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.orders.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "orders" {
+  api_id    = aws_apigatewayv2_api.payment.id
+  route_key = "POST /orders"
+  target    = "integrations/${aws_apigatewayv2_integration.orders.id}"
+}

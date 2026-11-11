@@ -1,0 +1,268 @@
+{
+  "info": {
+    "name": "payment-service — Webhook Tests",
+    "description": "Testa o endpoint POST /webhook do payment-service. Requer a variável mp_webhook_secret configurada no ambiente.\n\nCenários cobertos:\n1. Assinatura inválida → 401\n2. Tipo não-payment → 200 ignorado\n3. Pagamento aprovado (PAID)\n4. Pagamento rejeitado (REJECTED)\n5. Campo data.id ausente → 400",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "webhook_url", "value": "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" },
+    { "key": "mp_payment_id_approved", "value": "98765432" },
+    { "key": "mp_payment_id_rejected", "value": "98765433" }
+  ],
+  "item": [
+    {
+      "name": "1. Assinatura inválida → 401",
+      "request": {
+        "method": "POST",
+        "url": "{{webhook_url}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature",  "value": "ts=1234567890,v1=assinaturainvalida" },
+          { "key": "x-request-id", "value": "req-invalid-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"payment\",\n  \"data\": { \"id\": \"12345678\" }\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 401', () => pm.response.to.have.status(401));",
+              "pm.test('body tem message', () => {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.property('message');",
+              "  pm.expect(json.message).to.include('Assinatura');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Tipo não-payment → 200 ignorado",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const secret = pm.environment.get('mp_webhook_secret');",
+              "if (!secret) { throw new Error('Variável mp_webhook_secret não configurada no ambiente'); }",
+              "",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const id = '99999999';",
+              "const reqId = 'req-ping-' + Date.now();",
+              "const manifest = `id:${id};request-id:${reqId};ts:${ts};`;",
+              "",
+              "const wordArray = CryptoJS.HmacSHA256(manifest, secret);",
+              "const v1 = CryptoJS.enc.Hex.stringify(wordArray);",
+              "",
+              "pm.environment.set('_ts', ts);",
+              "pm.environment.set('_v1', v1);",
+              "pm.environment.set('_req_id', reqId);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('ignored=true', () => {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.ignored).to.be.true;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{webhook_url}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature",  "value": "ts={{_ts}},v1={{_v1}}" },
+          { "key": "x-request-id", "value": "{{_req_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"99999999\",\n  \"type\": \"merchant_order\",\n  \"data\": { \"id\": \"99999999\" }\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "3. Pagamento aprovado (PAID)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const secret = pm.environment.get('mp_webhook_secret');",
+              "if (!secret) { throw new Error('Variável mp_webhook_secret não configurada no ambiente'); }",
+              "",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const id = pm.collectionVariables.get('mp_payment_id_approved');",
+              "const reqId = 'req-approved-' + Date.now();",
+              "const manifest = `id:${id};request-id:${reqId};ts:${ts};`;",
+              "",
+              "const wordArray = CryptoJS.HmacSHA256(manifest, secret);",
+              "const v1 = CryptoJS.enc.Hex.stringify(wordArray);",
+              "",
+              "pm.environment.set('_ts', ts);",
+              "pm.environment.set('_v1', v1);",
+              "pm.environment.set('_req_id', reqId);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('processed=true ou ignorado por task_token ausente', () => {",
+              "  const json = pm.response.json();",
+              "  // Se order não existir no DynamoDB, retorna 200 ignored",
+              "  // Se existir, retorna processed=true, status=PAID",
+              "  pm.expect(json).to.have.any.keys('processed', 'ignored');",
+              "  if (json.processed) {",
+              "    pm.expect(json.status).to.equal('PAID');",
+              "    console.log('✅ SAGA resolvida como PAID');",
+              "  } else {",
+              "    console.log('ℹ️  Nenhuma SAGA ativa para esse mp_payment_id — rode o cenário SQS primeiro');",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{webhook_url}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature",  "value": "ts={{_ts}},v1={{_v1}}" },
+          { "key": "x-request-id", "value": "{{_req_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{mp_payment_id_approved}}\",\n  \"live_mode\": false,\n  \"type\": \"payment\",\n  \"action\": \"payment.updated\",\n  \"data\": { \"id\": \"{{mp_payment_id_approved}}\" }\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "4. Pagamento rejeitado (REJECTED)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const secret = pm.environment.get('mp_webhook_secret');",
+              "if (!secret) { throw new Error('Variável mp_webhook_secret não configurada no ambiente'); }",
+              "",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const id = pm.collectionVariables.get('mp_payment_id_rejected');",
+              "const reqId = 'req-rejected-' + Date.now();",
+              "const manifest = `id:${id};request-id:${reqId};ts:${ts};`;",
+              "",
+              "const wordArray = CryptoJS.HmacSHA256(manifest, secret);",
+              "const v1 = CryptoJS.enc.Hex.stringify(wordArray);",
+              "",
+              "pm.environment.set('_ts', ts);",
+              "pm.environment.set('_v1', v1);",
+              "pm.environment.set('_req_id', reqId);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('processed=true ou ignorado por task_token ausente', () => {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json).to.have.any.keys('processed', 'ignored');",
+              "  if (json.processed) {",
+              "    pm.expect(json.status).to.equal('REJECTED');",
+              "    console.log('✅ SAGA resolvida como REJECTED');",
+              "  } else {",
+              "    console.log('ℹ️  Nenhuma SAGA ativa para esse mp_payment_id — rode o cenário SQS primeiro');",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{webhook_url}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature",  "value": "ts={{_ts}},v1={{_v1}}" },
+          { "key": "x-request-id", "value": "{{_req_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{mp_payment_id_rejected}}\",\n  \"live_mode\": false,\n  \"type\": \"payment\",\n  \"action\": \"payment.updated\",\n  \"data\": { \"id\": \"{{mp_payment_id_rejected}}\" }\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "5. data.id ausente → 400",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const secret = pm.environment.get('mp_webhook_secret');",
+              "if (!secret) { throw new Error('Variável mp_webhook_secret não configurada no ambiente'); }",
+              "",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const id = '';",
+              "const reqId = 'req-noid-' + Date.now();",
+              "const manifest = `id:${id};request-id:${reqId};ts:${ts};`;",
+              "",
+              "const wordArray = CryptoJS.HmacSHA256(manifest, secret);",
+              "const v1 = CryptoJS.enc.Hex.stringify(wordArray);",
+              "",
+              "pm.environment.set('_ts', ts);",
+              "pm.environment.set('_v1', v1);",
+              "pm.environment.set('_req_id', reqId);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 400', () => pm.response.to.have.status(400));",
+              "pm.test('body tem message data.id ausente', () => {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.message).to.include('data.id');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{webhook_url}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature",  "value": "ts={{_ts}},v1={{_v1}}" },
+          { "key": "x-request-id", "value": "{{_req_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"payment\",\n  \"data\": {}\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    }
+  ]
+}
