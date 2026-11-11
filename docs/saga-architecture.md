@@ -130,9 +130,18 @@ O Mercado Pago assina cada webhook com HMAC-SHA256. Formato do header:
 x-signature: ts=<timestamp_unix>,v1=<hmac_hex>
 ```
 
-String assinada: `id:<notification_id>;request-id:<x-request-id>;ts:<timestamp>;`
+String assinada: `id:<data.id>;request-id:<x-request-id>;ts:<timestamp>;`
+
+- `data.id` é o ID do pagamento, lido da query string (`?data.id=...`, como o MP envia para a `notification_url`); se ausente, usa `data.id` do body. Valores alfanuméricos vão em minúsculas.
+- Partes ausentes (sem `data.id` ou sem `x-request-id`) são omitidas do texto assinado.
+- A comparação do `v1` é feita em tempo constante (`timingSafeEqual`). Assinatura inválida → `401`.
+- Cada notificação gera um log `mp_webhook_received` (request_id, type, data_id, signature_valid) no CloudWatch.
 
 O secret é armazenado no AWS Secrets Manager em `payment/mp-webhook-secret`.
+
+### back_urls (Checkout Pro)
+
+Opcionais, configuradas via Terraform (`checkout_back_url_success`, `checkout_back_url_pending`, `checkout_back_url_failure`). Quando `success` está definida, a preferência é criada com `auto_return: "approved"`. As URLs precisam ser HTTPS com DNS — o MP não aceita `localhost`.
 
 ---
 

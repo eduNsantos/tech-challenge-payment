@@ -57,7 +57,8 @@ docs {
   ### Header x-signature
   O Mercado Pago assina os webhooks com HMAC-SHA256.
   Formato: `ts=<timestamp_unix>,v1=<hmac_hex>`
-  A string assinada é: `id:<notification_id>;request-id:<x-request-id>;ts:<timestamp>;`
+  A string assinada é: `id:<data.id>;request-id:<x-request-id>;ts:<timestamp>;`
+  (o MP real envia `data.id` também na query string; aqui a Lambda usa o do body como fallback)
 
   Em produção, o valor real vem do painel do Mercado Pago em:
   Configurações → Notificações → Chave secreta

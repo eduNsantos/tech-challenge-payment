@@ -1,7 +1,7 @@
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand, QueryCommand } = require('@aws-sdk/client-dynamodb');
 const { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } = require('@aws-sdk/client-sfn');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const { createHmac } = require('crypto');
+const { createHmac, timingSafeEqual } = require('crypto');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const dynamo = new DynamoDBClient({});
@@ -23,23 +23,40 @@ async function getMpToken() {
   return cachedMpToken;
 }
 
-function validateSignature(headers, body, secret) {
+function resolveDataId(query, body) {
+  // Doc MP: data.id vem da query string da notification_url; body é fallback
+  let id = query['data.id'];
+  if (!id) {
+    try { id = JSON.parse(body)?.data?.id; } catch { id = undefined; }
+  }
+  if (id === undefined || id === null || id === '') return null;
+  const str = String(id);
+  return /[a-z]/i.test(str) ? str.toLowerCase() : str;
+}
+
+function validateSignature(headers, query, body, secret) {
   const xSignature = headers['x-signature'];
   const xRequestId = headers['x-request-id'];
   if (!xSignature) return false;
 
-  const parts = Object.fromEntries(xSignature.split(',').map(p => p.split('=')));
+  const parts = Object.fromEntries(
+    xSignature.split(',').map(p => p.split('=').map(s => s.trim()))
+  );
   const ts = parts['ts'];
   const v1 = parts['v1'];
   if (!ts || !v1) return false;
 
-  // MP assina com data.id (resource ID), não com o notification id do topo do body
-  let dataId;
-  try { dataId = String(JSON.parse(body)?.data?.id ?? ''); } catch { dataId = ''; }
-  const manifest = `id:${dataId};request-id:${xRequestId ?? ''};ts:${ts};`;
+  // Template: id:[data.id];request-id:[x-request-id];ts:[ts]; — partes ausentes são omitidas
+  const dataId = resolveDataId(query, body);
+  const manifest =
+    (dataId ? `id:${dataId};` : '') +
+    (xRequestId ? `request-id:${xRequestId};` : '') +
+    `ts:${ts};`;
   const expected = createHmac('sha256', secret).update(manifest).digest('hex');
 
-  return expected === v1;
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(v1, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function ok(body = {}) {
@@ -56,10 +73,19 @@ exports.handler = async (event) => {
     Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])
   );
 
+  const query = event.queryStringParameters ?? {};
+
   // Valida assinatura HMAC-SHA256 do Mercado Pago
   const secret = await getWebhookSecret();
-  if (!validateSignature(headers, rawBody, secret)) {
-    console.warn('Webhook com assinatura invalida rejeitado');
+  const signatureValid = validateSignature(headers, query, rawBody, secret);
+  console.info(JSON.stringify({
+    event: 'mp_webhook_received',
+    request_id: headers['x-request-id'] ?? null,
+    type: query.type ?? query.topic ?? null,
+    data_id: resolveDataId(query, rawBody),
+    signature_valid: signatureValid,
+  }));
+  if (!signatureValid) {
     return err(401, 'Assinatura invalida');
   }
 
@@ -75,7 +101,7 @@ exports.handler = async (event) => {
     return ok({ ignored: true });
   }
 
-  const mpPaymentId = payload.data?.id;
+  const mpPaymentId = payload.data?.id ?? query['data.id'];
   if (!mpPaymentId) return err(400, 'data.id ausente');
 
   const token = await getMpToken();

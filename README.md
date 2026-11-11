@@ -68,6 +68,11 @@ Editar `infra/terraform.tfvars` com os valores reais:
 mp_access_token      = "APP_USR-..."    # Painel MP > Configurações > Credenciais de produção
 mp_webhook_secret    = "..."            # Painel MP > Configurações > Notificações > Chave secreta
 app_notification_url = "https://..."   # URL interna do App/EKS para receber o link de pagamento
+
+# Opcionais — back_urls do Checkout Pro (habilita auto_return=approved se success estiver definida)
+# checkout_back_url_success = "https://app.example.com/checkout/success"
+# checkout_back_url_pending = "https://app.example.com/checkout/pending"
+# checkout_back_url_failure = "https://app.example.com/checkout/failure"
 ```
 
 > **Nunca commite `terraform.tfvars`** — ele está no `.gitignore`.

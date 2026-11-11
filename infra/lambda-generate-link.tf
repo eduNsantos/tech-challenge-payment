@@ -12,6 +12,9 @@ resource "aws_lambda_function" "generate_link" {
     variables = {
       MP_ACCESS_TOKEN_SECRET_ID = aws_secretsmanager_secret.mp_access_token.name
       WEBHOOK_URL               = "${aws_apigatewayv2_stage.default.invoke_url}webhook"
+      BACK_URL_SUCCESS          = var.checkout_back_url_success
+      BACK_URL_PENDING          = var.checkout_back_url_pending
+      BACK_URL_FAILURE          = var.checkout_back_url_failure
     }
   }
 }

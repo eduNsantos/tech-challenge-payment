@@ -10,6 +10,16 @@ async function getMpToken() {
   return cachedToken;
 }
 
+function backUrlsConfig() {
+  const back_urls = Object.fromEntries(
+    [['success', process.env.BACK_URL_SUCCESS], ['pending', process.env.BACK_URL_PENDING], ['failure', process.env.BACK_URL_FAILURE]]
+      .filter(([, url]) => url)
+  );
+  if (Object.keys(back_urls).length === 0) return {};
+  // MP rejeita auto_return sem back_urls.success definido
+  return { back_urls, ...(back_urls.success && { auto_return: 'approved' }) };
+}
+
 exports.handler = async (event) => {
   const { order_id, amount_cents, description, customer, items } = event;
   const token = await getMpToken();
@@ -18,6 +28,7 @@ exports.handler = async (event) => {
     external_reference: order_id,
     statement_descriptor: description.slice(0, 16),
     notification_url: process.env.WEBHOOK_URL,
+    ...backUrlsConfig(),
     payer: {
       name: customer.name,
       email: customer.email,
