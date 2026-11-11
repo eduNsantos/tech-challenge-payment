@@ -16,7 +16,8 @@ Payload enviado pelo App/EKS via SQS para disparar uma nova cobrança no payment
 | `amount_cents` | integer (≥ 1) | ✅ | Valor total em centavos. Ex: R$ 150,00 → `15000`. |
 | `currency` | string (enum) | ✅ | Código da moeda. Valores aceitos: `"BRL"`. |
 | `description` | string (≤ 256 chars) | ✅ | Descrição do pedido exibida no checkout do gateway. |
-| `callback_url` | string (URL HTTPS) | ⬜ | URL para onde o payment-service enviará o resultado final do pagamento (PAID ou REJECTED) após receber o webhook do Mercado Pago. O payload reflete o registro completo do DynamoDB. |
+| `notification_url` | string (URL) | ⬜ | URL para onde o Step ③ envia `{order_id, payment_link, status: "WAITING_PAYMENT"}` assim que o link é gerado. Se ausente, usa a variável `APP_NOTIFICATION_URL` da Lambda (fallback). O application envia sempre, então o deploy do payment-service não depende da URL do app. |
+| `callback_url` | string (URL HTTPS) | ⬜ | URL para onde o payment-service enviará o resultado final do pagamento: `PAID` ou `REJECTED` (após o webhook do Mercado Pago) ou `EXPIRED` (timeout da SAGA, Step ⑤). O payload reflete o registro completo do DynamoDB. |
 
 ---
 
@@ -26,7 +27,8 @@ Payload enviado pelo App/EKS via SQS para disparar uma nova cobrança no payment
 |---|---|---|---|
 | `name` | string (≤ 256 chars) | ✅ | Nome completo do pagador. |
 | `email` | string (email) | ✅ | E-mail do pagador. Formato RFC 5322. |
-| `cpf` | string | ✅ | CPF sem formatação, 11 dígitos. Padrão: `^\d{11}$`. Ex: `"12345678901"`. |
+| `cpf` | string | ✅ | Documento do pagador sem formatação: CPF (11 dígitos) **ou CNPJ (14 dígitos)**. Padrão: `^\d{11}$\|^\d{14}$`. O tipo enviado ao Mercado Pago (`identification.type`) é deduzido pelo tamanho. Ex: `"12345678901"`, `"11222333000181"`. |
+| `document_type` | string (enum) | ⬜ | `"CPF"` ou `"CNPJ"`. Opcional; se enviado, deve corresponder ao tamanho de `cpf` (senão o Step ① aborta com `InvalidDocument`). |
 | `phone` | string | ⬜ | Telefone E.164. Padrão: `^\+55\d{10,11}$`. Ex: `"+5511999999999"`. |
 
 ---
@@ -91,7 +93,8 @@ Payload enviado pelo App/EKS via SQS para disparar uma nova cobrança no payment
     "store_id":       "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
   },
 
-  "callback_url": "https://app.example.com/payments/webhook/result"
+  "callback_url": "https://app.example.com/payments/webhook/result",
+  "notification_url": "https://app.example.com/api/payment/notification"
 }
 ```
 
@@ -103,7 +106,7 @@ Payload enviado pelo App/EKS via SQS para disparar uma nova cobrança no payment
 
 ## Payload de retorno (callback_url)
 
-Quando `callback_url` está presente, o payment-service faz `POST` para essa URL após processar o webhook do Mercado Pago (resultado PAID ou REJECTED). O payload reflete o estado salvo no DynamoDB:
+Quando `callback_url` está presente, o payment-service faz `POST` para essa URL após processar o webhook do Mercado Pago (resultado PAID ou REJECTED) e também quando a cobrança expira (Step ⑤, status EXPIRED). O payload reflete o estado salvo no DynamoDB:
 
 ```json
 {
@@ -136,9 +139,9 @@ Quando `callback_url` está presente, o payment-service faz `POST` para essa URL
 
 | Campo | Tipo | Descrição |
 |---|---|---|
-| `status` | enum | `PAID` (aprovado) ou `REJECTED` (recusado/cancelado) |
+| `status` | enum | `PAID` (aprovado), `REJECTED` (recusado/cancelado) ou `EXPIRED` (timeout da SAGA) |
 | `payment_link` | string \| null | Link do checkout MP gerado no Step ② |
-| `mp_payment_id` | string | ID do pagamento no Mercado Pago |
+| `mp_payment_id` | string \| null | ID do pagamento no Mercado Pago (`null` em `EXPIRED` sem tentativa de pagamento) |
 
 > A notificação é **best-effort**: falhas no POST são logadas mas não bloqueiam o processamento da SAGA.
 
@@ -150,7 +153,7 @@ Quando `callback_url` está presente, o payment-service faz `POST` para essa URL
 |---|---|---|
 | 1 | `sum(item.quantity × item.unit_price_cents) == amount_cents` | Step ① aborta a saga e envia para DLQ |
 | 2 | `idempotency_key = sha256(order_id + "\|" + amount_cents + "\|" + created_at)` | Step Functions rejeita execução duplicada |
-| 3 | CPF com dígitos verificadores válidos (algoritmo Receita Federal) | Step ① encerra com `status = INVALID_CPF` |
+| 3 | CPF ou CNPJ com dígitos verificadores válidos (algoritmo Receita Federal) | Step ① aborta a saga com erro `InvalidDocument` |
 | 4 | `amount_cents` deve ser inteiro positivo (não float) | Rejeição imediata no Step ① |
 | 5 | `created_at` deve terminar em `Z` (UTC) | Divergência no `idempotency_key` entre serviços |
 | 6 | SQS Standard: at-least-once delivery — o `idempotency_key` é a única defesa contra duplicatas | — |

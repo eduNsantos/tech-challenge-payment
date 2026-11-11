@@ -67,7 +67,7 @@ Editar `infra/terraform.tfvars` com os valores reais:
 ```hcl
 mp_access_token      = "APP_USR-..."    # Access Token de produção da aplicação do VENDEDOR (ver "Configurar o Mercado Pago")
 mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA aplicação
-app_notification_url = "https://..."   # URL interna do App/EKS para receber o link de pagamento
+# app_notification_url = "https://..."  # Opcional — fallback; o application envia notification_url em cada pedido
 
 # Opcionais — back_urls do Checkout Pro (habilita auto_return=approved se success estiver definida)
 # checkout_back_url_success = "https://app.example.com/checkout/success"
@@ -157,7 +157,7 @@ Secrets do repositório (*Settings > Secrets and variables > Actions*):
 |---|---|---|
 | `MP_ACCESS_TOKEN` | `mp_access_token` | Access Token `APP_USR-...` da aplicação do vendedor |
 | `MP_WEBHOOK_SECRET` | `mp_webhook_secret` | Assinatura secreta do Webhook da mesma aplicação |
-| `TF_VAR_app_notification_url` | `app_notification_url` | URL do App para receber o link (opcional — vazio desliga a notificação) |
+| `TF_VAR_app_notification_url` | `app_notification_url` | Opcional — fallback quando a mensagem não traz `notification_url` (o application sempre envia) |
 
 Atualizar via CLI (o valor vai por stdin, não aparece no histórico do shell):
 
@@ -181,6 +181,30 @@ O deploy manual pede como inputs `aws_access_key_id`, `aws_secret_access_key` e 
 O bucket do Terraform state é derivado automaticamente via `aws sts get-caller-identity`.
 
 ---
+
+## Integração com o tech-challenge-application (ordem de deploy)
+
+O application envia `callback_url` e `notification_url` **em cada pedido**, então o payment-service não precisa conhecer a URL do app no deploy. A dependência é de mão única:
+
+```
+payment-service ──(api_base_url)──▶ application
+application ──(callback_url / notification_url, por mensagem)──▶ payment-service
+```
+
+1. **Deploy do payment-service** (este repo, `workflow_dispatch`). O resumo do job mostra:
+   - `api_base_url` → base da API (para conferência; o app descobre sozinho)
+   - `webhook_url` → configurar no painel do Mercado Pago (uma vez)
+2. **Deploy do application** (repo `tech-challenge-kubernetes`, workflow `deploy-eks.yml`). O job `rollout` resolve automaticamente:
+   - `PAYMENT_SERVICE_URL` → procura a API Gateway pelo nome **`payment-service-api`** (não renomeie sem ajustar o workflow)
+   - `APP_URL` → hostname do ELB do Service `postech-app`. Dele saem `callback_url` e `notification_url`.
+
+Quando reexecutar cada um:
+
+| Mudou | Ação |
+|---|---|
+| Código/infra do payment-service (API Gateway mantido) | Só redeploy do payment-service |
+| API Gateway recriado (`destroy`/lab resetado) | Redeploy do payment-service **e** rodar o `deploy-eks` de novo (redescobre a URL) |
+| ELB do app mudou | Só redeploy do app — cobranças **já abertas** perdem o retorno (URL antiga gravada na SAGA) |
 
 ## Configurar o Mercado Pago (ambiente de teste)
 

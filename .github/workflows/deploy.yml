@@ -55,6 +55,7 @@ jobs:
     env:
       TF_VAR_mp_access_token:      ${{ secrets.MP_ACCESS_TOKEN }}
       TF_VAR_mp_webhook_secret:    ${{ secrets.MP_WEBHOOK_SECRET }}
+      # Opcional: o application envia notification_url em cada pedido. Só serve de fallback.
       TF_VAR_app_notification_url: ${{ secrets.TF_VAR_app_notification_url }}
 
     steps:
@@ -196,3 +197,20 @@ jobs:
       - name: Terraform apply
         working-directory: infra
         run: terraform apply -auto-approve
+
+      # URLs que o application e o Mercado Pago precisam — copie para PAYMENT_SERVICE_URL no app
+      - name: Publish integration URLs
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          terraform output -json > /tmp/tf-outputs.json
+          API_BASE_URL=$(jq -r '.api_base_url.value' /tmp/tf-outputs.json)
+          WEBHOOK_URL=$(jq -r '.webhook_url.value' /tmp/tf-outputs.json)
+          {
+            echo "## URLs de integração"
+            echo ""
+            echo "| Uso | Valor |"
+            echo "|---|---|"
+            echo "| \`PAYMENT_SERVICE_URL\` no application | \`${API_BASE_URL}\` |"
+            echo "| Webhook no painel do Mercado Pago | \`${WEBHOOK_URL}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

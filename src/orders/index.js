@@ -19,7 +19,7 @@ exports.handler = async (event) => {
     return err(400, 'Body JSON invalido');
   }
 
-  const { order_id, amount_cents, currency, description, customer, items, metadata, callback_url } = body;
+  const { order_id, amount_cents, currency, description, customer, items, metadata, callback_url, notification_url } = body;
 
   if (!order_id || typeof order_id !== 'string') return err(400, 'order_id obrigatorio');
   if (!amount_cents || typeof amount_cents !== 'number' || amount_cents <= 0) return err(400, 'amount_cents invalido');
@@ -43,6 +43,7 @@ exports.handler = async (event) => {
     metadata: metadata ?? {},
     created_at,
     ...(callback_url ? { callback_url } : {}),
+    ...(notification_url ? { notification_url } : {}),
   };
 
   await sqs.send(new SendMessageCommand({

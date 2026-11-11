@@ -27,7 +27,8 @@ variable "mp_webhook_secret" {
 
 variable "app_notification_url" {
   type        = string
-  description = "URL do servico de origem (App/EKS) para receber o link de pagamento gerado"
+  default     = ""
+  description = "Fallback opcional: URL para receber o link de pagamento quando a mensagem nao traz notification_url. O application envia notification_url em cada pedido, entao o deploy do payment-service nao depende da URL do app."
 }
 
 variable "checkout_back_url_success" {

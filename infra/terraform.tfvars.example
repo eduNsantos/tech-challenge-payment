@@ -3,7 +3,7 @@
 
 mp_access_token      = "APP_USR-..."    # Painel MP: Configuracoes > Credenciais
 mp_webhook_secret    = "..."            # Painel MP: Configuracoes > Notificacoes > Chave secreta
-app_notification_url = "https://..."   # URL interna do App/EKS para receber o link de pagamento
+app_notification_url = "https://<app-publico>/api/payment/notification"   # endpoint do application que recebe o link de pagamento (Step ③)
 
 # Opcionais — back_urls do Checkout Pro (HTTPS com DNS; localhost nao e aceito pelo MP)
 # checkout_back_url_success = "https://app.example.com/checkout/success"

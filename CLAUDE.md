@@ -18,9 +18,9 @@ App/EKS → POST /orders → API Gateway v2 → λ payment-orders-api  (src/orde
                                               Step Functions — SAGA "payment-saga"
                                               ① Registrar     → DynamoDB PENDING           (src/register/)
                                               ② GerarLink     → Mercado Pago API            (src/generate-link/)
-                                              ③ NotificarApp  → HTTP POST ao App + DynamoDB WAITING_PAYMENT  (src/notify-wait/)
+                                              ③ NotificarApp  → HTTP POST em notification_url (fallback APP_NOTIFICATION_URL) + DynamoDB WAITING_PAYMENT  (src/notify-wait/)
                                               ④ Aguardar      → WaitForTaskToken (30min heartbeat, 48h timeout)
-                                              ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED → DLQ → SNS  (src/cancel/)
+                                              ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED + POST callback_url (EXPIRED) → DLQ → SNS  (src/cancel/)
 
 Mercado Pago → POST /webhook → API Gateway v2 → λ payment-callback
                                                → valida HMAC-SHA256 (Secrets Manager)
@@ -56,7 +56,7 @@ PENDING → WAITING_PAYMENT → PAID
 src/
   orders/index.js         # POST /orders → valida payload, gera idempotency_key, enfileira SQS
   trigger/index.js        # Poll SQS → StartExecution
-  register/index.js       # Step ① — valida CPF/amounts, DynamoDB PENDING
+  register/index.js       # Step ① — valida CPF ou CNPJ (customer.cpf) e amounts, DynamoDB PENDING
   generate-link/index.js  # Step ② — cria preferência no Mercado Pago
   notify-wait/index.js    # Step ③/④ — salva task token, notifica app
   cancel/index.js         # Step ⑤ — cancela no MP, marca EXPIRED
@@ -119,14 +119,16 @@ AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
 MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
-TF_VAR_app_notification_url
+TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url em cada mensagem
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
-## Campo `callback_url` na mensagem SQS
+## Campos `notification_url` e `callback_url` na mensagem SQS
 
-Campo opcional na mensagem SQS. Quando presente, o `callback/index.js` faz POST para essa URL após processar o webhook do MP (PAID ou REJECTED), com o payload refletindo o registro completo do DynamoDB.
+Ambos são enviados pelo application em cada pedido — por isso o deploy do payment-service **não depende** da URL do app (sem dependência circular). `notification_url` recebe o link de pagamento no Step ③; `callback_url` recebe o resultado final.
+
+Campo opcional na mensagem SQS. Quando presente, o `callback/index.js` faz POST para essa URL após processar o webhook do MP (PAID ou REJECTED) e o `cancel/index.js` faz POST com status EXPIRED no timeout, com o payload refletindo o registro completo do DynamoDB.
 Ver schema completo em `bruno/docs/sqs-message-schema.md`.
 
 ## Padrões do projeto
