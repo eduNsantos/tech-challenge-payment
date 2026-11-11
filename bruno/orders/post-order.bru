@@ -1,0 +1,90 @@
+meta {
+  name: Criar pedido de pagamento
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "order_id": "{{$guid}}",
+    "amount_cents": 15000,
+    "currency": "BRL",
+    "description": "Pedido POS Tech Challenge",
+    "created_at": "{{$isoTimestamp}}",
+    "customer": {
+      "name": "João da Silva",
+      "email": "test_user_123456789@testuser.com",
+      "cpf": "52998224725",
+      "phone": "+5511999999999"
+    },
+    "items": [
+      {
+        "id": "PROD-001",
+        "title": "Lanche Artesanal",
+        "quantity": 2,
+        "unit_price_cents": 5000
+      },
+      {
+        "id": "PROD-042",
+        "title": "Suco Natural 500ml",
+        "quantity": 1,
+        "unit_price_cents": 5000
+      }
+    ],
+    "metadata": {
+      "source_service": "pos-application"
+    },
+    "callback_url": "https://webhook.site/SUBSTITUA-COM-SEU-UUID"
+  }
+}
+
+script:post-response {
+  if (res.status === 202) {
+    bru.setVar('idempotency_key', res.body.idempotency_key);
+    bru.setVar('order_id', res.body.order_id);
+    console.log('order_id salvo:', res.body.order_id);
+    console.log('idempotency_key salvo:', res.body.idempotency_key);
+  }
+}
+
+docs {
+  ## POST /orders — Criar pedido de pagamento
+
+  Inicia o fluxo completo de pagamento via SAGA:
+  1. Enfileira a mensagem no SQS `payment-orders`
+  2. Lambda trigger inicia a execução no Step Functions
+  3. SAGA executa: PENDING → GerarLink (Mercado Pago) → WAITING_PAYMENT
+  4. O `payment_link` retornado é o `sandbox_init_point` do MP
+
+  ### Resposta esperada (202)
+  ```json
+  { "idempotency_key": "<sha256_hex>", "order_id": "<uuid>", "status": "QUEUED" }
+  ```
+
+  ### Pré-requisitos
+  - `baseUrl` apontando para a API Gateway deployada
+  - Variável de ambiente `MP_ACCESS_TOKEN_SECRET_ID` com token `TEST-` no Secrets Manager
+  - `WEBHOOK_URL` = URL pública da rota `POST /webhook`
+
+  ### CPF de teste
+  O CPF `52998224725` (529.982.247-25) é matematicamente válido.
+  Use o e-mail de um test user criado no painel do Mercado Pago Developers.
+
+  ### callback_url
+  Substitua o valor por uma URL do https://webhook.site para observar
+  a notificação final (PAID ou REJECTED) sem precisar de um servidor.
+
+  ### Verificar status no Step Functions
+  Após enviar, acesse o console AWS → Step Functions → payment-saga
+  para acompanhar a execução em tempo real.
+}

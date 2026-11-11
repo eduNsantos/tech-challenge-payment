@@ -90,6 +90,12 @@ exports.handler = async (event) => {
   const orderId = payment.external_reference;
   const status = payment.status;
 
+  // PIX/boleto aguardando confirmação bancária — mantém WaitForTaskToken ativo
+  if (status === 'pending') {
+    console.info(`Pagamento ${mpPaymentId} em status pending para order ${orderId} — aguardando`);
+    return ok({ processed: false, status: 'WAITING_PAYMENT' });
+  }
+
   const { Items } = await dynamo.send(new QueryCommand({
     TableName: process.env.DYNAMODB_TABLE,
     IndexName: 'order_id-index',

@@ -12,8 +12,19 @@ post {
 
 headers {
   Content-Type: application/json
-  x-signature: ts=1698499200,v1=abc123placeholder
-  x-request-id: req-{{$randomInt}}
+}
+
+script:pre-request {
+  const { createHmac } = require('crypto');
+  const ts = String(Math.floor(Date.now() / 1000));
+  const requestId = `req-${Date.now()}`;
+  const body = JSON.parse(req.body);
+  const paymentId = String(body.data?.id ?? '');
+  const secret = bru.getEnvVar('mpWebhookSecret');
+  const manifest = `id:${paymentId};request-id:${requestId};ts:${ts};`;
+  const v1 = createHmac('sha256', secret).update(manifest).digest('hex');
+  req.setHeader('x-signature', `ts=${ts},v1=${v1}`);
+  req.setHeader('x-request-id', requestId);
 }
 
 body:json {
