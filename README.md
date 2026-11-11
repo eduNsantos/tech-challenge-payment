@@ -65,8 +65,8 @@ cp infra/terraform.tfvars.example infra/terraform.tfvars
 Editar `infra/terraform.tfvars` com os valores reais:
 
 ```hcl
-mp_access_token      = "APP_USR-..."    # Painel MP > Configurações > Credenciais de produção
-mp_webhook_secret    = "..."            # Painel MP > Configurações > Notificações > Chave secreta
+mp_access_token      = "APP_USR-..."    # Access Token de produção da aplicação do VENDEDOR (ver "Configurar o Mercado Pago")
+mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA aplicação
 app_notification_url = "https://..."   # URL interna do App/EKS para receber o link de pagamento
 
 # Opcionais — back_urls do Checkout Pro (habilita auto_return=approved se success estiver definida)
@@ -151,36 +151,85 @@ dlq_url                    = "https://sqs.us-east-1.amazonaws.com/008962119864/p
 
 ### Deploy via CI/CD (GitHub Actions)
 
-Adicionar os seguintes secrets no repositório GitHub:
+Secrets do repositório (*Settings > Secrets and variables > Actions*):
 
-| Secret | Descrição |
+| Secret | Vira a variável Terraform | Descrição |
+|---|---|---|
+| `MP_ACCESS_TOKEN` | `mp_access_token` | Access Token `APP_USR-...` da aplicação do vendedor |
+| `MP_WEBHOOK_SECRET` | `mp_webhook_secret` | Assinatura secreta do Webhook da mesma aplicação |
+| `TF_VAR_app_notification_url` | `app_notification_url` | URL do App para receber o link (opcional — vazio desliga a notificação) |
+
+Atualizar via CLI (o valor vai por stdin, não aparece no histórico do shell):
+
+```bash
+printf '%s' 'APP_USR-...' | gh secret set MP_ACCESS_TOKEN
+printf '%s' '<assinatura>' | gh secret set MP_WEBHOOK_SECRET
+```
+
+> `mp_access_token` e `mp_webhook_secret` têm `validation` contra valor vazio: se o secret não existir
+> ou estiver com nome errado, o `terraform plan` falha em vez de sobrescrever o Secrets Manager com string vazia.
+
+Comportamento do pipeline:
+
+| Gatilho | O que roda |
 |---|---|
-| `AWS_ACCESS_KEY_ID` | Chave de acesso AWS |
-| `AWS_SECRET_ACCESS_KEY` | Chave secreta AWS |
-| `TF_VAR_mp_access_token` | Access token do Mercado Pago |
-| `TF_VAR_mp_webhook_secret` | Secret do webhook do Mercado Pago |
-| `TF_VAR_app_notification_url` | URL do App para notificação |
+| Push na `main` | Apenas **Test** (`npm test`) |
+| *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy** (`terraform init/plan/apply`) |
 
-> O bucket do Terraform state é derivado automaticamente no pipeline via
-> `aws sts get-caller-identity` — não é necessário configurar nenhum secret adicional para isso.
-
-O pipeline executa automaticamente no push para `main`:
-1. **Test** — `npm test` nos handlers Lambda
-2. **Deploy** — Terraform init (bucket derivado do account ID) → plan → apply
+O deploy manual pede como inputs `aws_access_key_id`, `aws_secret_access_key` e `aws_session_token`
+— copie de *AWS Academy > AWS Details > AWS CLI* (expiram em ~3h; são mascarados no log).
+O bucket do Terraform state é derivado automaticamente via `aws sts get-caller-identity`.
 
 ---
 
-## Pós-deploy: configurar o Mercado Pago
+## Configurar o Mercado Pago (ambiente de teste)
 
-Após o `terraform apply`, copie o valor de `webhook_url` e configure no painel do Mercado Pago:
+O Mercado Pago **não aceita misturar conta real com conta de teste** no mesmo pagamento
+(erro *"Uma das partes com as quais você está tentando efetuar o pagamento é de teste"*).
+Por isso vendedor **e** comprador precisam ser contas de teste, distintas entre si.
 
-**Painel MP > Configurações > Notificações > URL de notificações**
+### 1. Criar as contas de teste
 
+Logado na sua **conta real**: *Suas integrações > [sua aplicação] > Contas de teste > Criar conta de teste*.
+
+| Conta | Tipo | Uso |
+|---|---|---|
+| Vendedor | Vendedor, Brasil | Dono das credenciais usadas pela Lambda `generate-link` |
+| Comprador | Comprador, Brasil | Login no checkout para pagar |
+
+> **Anote a senha na criação** — ela não é exibida depois e não pode ser consultada via API.
+> O código de verificação pedido no login aparece na mesma lista de contas de teste.
+> O usuário `TESTUSER<n>` e o e-mail `test_user_<n>@testuser.com` com o mesmo número são a mesma conta.
+
+### 2. Criar a aplicação do vendedor
+
+1. Em uma **janela anônima**, faça login no Mercado Pago com o **vendedor de teste**.
+2. *Suas integrações > Criar aplicação* (produto: Checkout Pro).
+3. *Credenciais de produção* → copie o **Access Token** (`APP_USR-...`). Sim, é "produção" de uma conta de teste.
+
+Para conferir de qual conta é um token:
+
+```bash
+curl -s -H "Authorization: Bearer APP_USR-..." https://api.mercadopago.com/users/me \
+  | jq '{id, nickname, tags}'
+# esperado: nickname TESTUSER..., tags contendo "test_user"
 ```
-https://xxx.execute-api.us-east-1.amazonaws.com/webhook
-```
 
-Marcar os eventos: `Pagamentos`.
+### 3. Configurar o Webhook (na aplicação do vendedor)
+
+*Webhooks > Configurar notificações*:
+
+- **URL de produção:** o output `webhook_url` do Terraform (ex.: `https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook`)
+- **Eventos:** `Pagamentos`
+- Salve e copie a **Assinatura secreta** (64 caracteres hex) — **não** é a URL.
+
+A assinatura é por aplicação: trocou de aplicação, troque também o `MP_WEBHOOK_SECRET`,
+senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
+
+### 4. Publicar as credenciais
+
+Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy manual.
+Com token `APP_USR-` a Lambda devolve o `init_point` (com `TEST-` devolve o `sandbox_init_point`).
 
 ---
 
@@ -193,22 +242,30 @@ O App/EKS envia a ordem via HTTP sem precisar de credenciais AWS:
 ```bash
 curl -X POST "$(terraform -chdir=infra output -raw orders_url)" \
   -H "Content-Type: application/json" \
-  -d '{
-    "order_id":    "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-    "amount_cents": 15000,
-    "currency":    "BRL",
-    "description": "Pedido #4872",
-    "customer": {
-      "name":  "João da Silva",
-      "email": "joao@email.com",
-      "cpf":   "12345678901"
+  -d "{
+    \"order_id\":     \"$(uuidgen | tr 'A-Z' 'a-z')\",
+    \"created_at\":   \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+    \"amount_cents\": 550,
+    \"currency\":     \"BRL\",
+    \"description\":  \"Pedido teste\",
+    \"customer\": {
+      \"name\":  \"Comprador Teste\",
+      \"email\": \"test_user_<n>@testuser.com\",
+      \"cpf\":   \"12345678909\"
     },
-    "items": [
-      { "id": "PROD-001", "title": "Lanche", "quantity": 2, "unit_price_cents": 7500 }
+    \"items\": [
+      { \"id\": \"PROD-001\", \"title\": \"Lanche\", \"quantity\": 2, \"unit_price_cents\": 250 },
+      { \"id\": \"PROD-042\", \"title\": \"Suco\",   \"quantity\": 1, \"unit_price_cents\": 50 }
     ],
-    "callback_url": "https://sua-app.com/payments/callback"
-  }'
+    \"callback_url\": \"https://sua-app.com/payments/callback\"
+  }"
 ```
+
+Regras que o Step ① valida (falha → `FAILED` + DLQ):
+- `amount_cents` = soma de `quantity × unit_price_cents` dos itens
+- `cpf` com dígitos verificadores válidos (`12345678909` é válido para teste)
+- Em teste, use valores entre **R$ 5,00 e R$ 6,00** (`amount_cents` 500–600)
+- `customer.email` com o e-mail do **comprador de teste** (o checkout pré-preenche o pagador)
 
 Resposta `202 Accepted`:
 ```json
@@ -228,11 +285,11 @@ aws sqs send-message \
     "idempotency_key": "a3f4b2c1d8e7f9004a5b6c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3",
     "order_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     "created_at": "2026-10-28T14:32:00Z",
-    "amount_cents": 15000,
+    "amount_cents": 550,
     "currency": "BRL",
     "description": "Pedido de teste",
-    "customer": {"name": "Teste", "email": "teste@email.com", "cpf": "12345678901"},
-    "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 15000}]
+    "customer": {"name": "Teste", "email": "test_user_<n>@testuser.com", "cpf": "12345678909"},
+    "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 550}]
   }'
 ```
 
@@ -240,7 +297,52 @@ aws sqs send-message \
 
 ---
 
-## Testar o webhook
+## Testar um pagamento de ponta a ponta
+
+1. Envie uma ordem (`POST /orders`, acima) e guarde o `idempotency_key`.
+2. Aguarde alguns segundos e pegue o link gerado:
+
+   ```bash
+   aws dynamodb get-item --table-name payment-saga-state --consistent-read \
+     --key '{"idempotency_key":{"S":"<idempotency_key>"}}' \
+     --query 'Item.[status.S, payment_link.S]' --output text
+   # esperado: WAITING_PAYMENT  https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=...
+   ```
+
+3. Abra o link em uma **janela anônima**, faça login com o **comprador de teste** e pague com um cartão de teste.
+4. Confira o resultado: o registro deve ir para `PAID`/`REJECTED`, a execução do Step Functions
+   (nome = `idempotency_key`) para `SUCCEEDED`/`FAILED`, e o log da `payment-callback` deve mostrar
+   `"event":"mp_webhook_received" ... "signature_valid":true`.
+
+### Cartões de teste (Brasil)
+
+| Bandeira | Número | CVV | Validade |
+|---|---|---|---|
+| Mastercard | 5031 4332 1540 6351 | 123 | 11/30 |
+| Visa | 4235 6477 2802 5682 | 123 | 11/30 |
+| American Express | 3753 6515 3556 885 | 1234 | 11/30 |
+
+CPF do titular: `12345678909`. O **nome do titular** define o resultado:
+
+| Nome | Resultado no MP | Status no DynamoDB |
+|---|---|---|
+| `APRO` | Aprovado | `PAID` |
+| `OTHE` | Recusado (erro geral) | `REJECTED` |
+| `CONT` | Pendente | permanece `WAITING_PAYMENT` |
+| `FUND` | Saldo insuficiente | `REJECTED` |
+| `SECU` | CVV inválido | `REJECTED` |
+
+> Lista oficial: https://www.mercadopago.com.br/developers/pt/docs/your-integrations/test/cards
+
+### Back URLs (opcional)
+
+Para redirecionar o comprador após o pagamento, defina `checkout_back_url_success`/`_pending`/`_failure`
+no `terraform.tfvars`. Com `success` definida, a preferência usa `auto_return: "approved"`.
+As URLs precisam ser HTTPS com DNS — o MP não aceita `localhost`.
+
+---
+
+## Testar o webhook (simulado)
 
 A collection Bruno em `bruno/` contém 3 cenários prontos:
 - `mp-payment-approved.bru` — pagamento aprovado → `sendTaskSuccess`
@@ -292,6 +394,27 @@ aws sqs receive-message \
   --max-number-of-messages 10 \
   --output json | jq '.Messages[].Body | fromjson | {order_id, status, error}'
 ```
+
+### Por que uma saga falhou
+
+```bash
+aws stepfunctions get-execution-history \
+  --execution-arn "arn:aws:states:us-east-1:<account>:execution:payment-saga:<idempotency_key>" \
+  --query 'events[?type==`TaskFailed`].taskFailedEventDetails.[error,cause]' --output text
+```
+
+---
+
+## Troubleshooting
+
+| Sintoma | Causa | Solução |
+|---|---|---|
+| Step ② falha com `403 PA_UNAUTHORIZED_RESULT_FROM_POLICIES` | Access token vazio ou inválido no Secrets Manager | Confira `MP_ACCESS_TOKEN` no GitHub e refaça o deploy; valide o token com `/users/me` |
+| Checkout: *"Uma das partes ... é de teste"* | Vendedor real + comprador de teste (ou vice-versa) | Use credenciais `APP_USR-` de um **vendedor de teste** e pague com outro **comprador de teste** |
+| Webhook do pagamento com `signature_valid:false` | `MP_WEBHOOK_SECRET` de outra aplicação | Copie a assinatura secreta da aplicação dona do token e refaça o deploy |
+| Logs com `data_id:null`, `signature_valid:false` (inclusive `merchant_order`) | Notificações no formato antigo (IPN), sem assinatura | Inofensivo — o MP reenvia por alguns dias; o pagamento chega pelo webhook assinado |
+| Saga em `FAILED` logo no Step ① | `amount_cents` ≠ soma dos itens ou CPF inválido | Corrija o payload (ver regras em "Enviar uma ordem de pagamento") |
+| Ordem em `WAITING_PAYMENT` indefinidamente | Ninguém pagou o link | Expira em 48h → `EXPIRED` (Step ⑤) |
 
 ---
 
