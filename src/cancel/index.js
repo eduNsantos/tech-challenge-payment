@@ -43,6 +43,8 @@ exports.handler = async (event) => {
     }
   }
 
+  const updatedAt = new Date().toISOString();
+
   await dynamo.send(new UpdateItemCommand({
     TableName: process.env.DYNAMODB_TABLE,
     Key: marshall({ idempotency_key }),
@@ -50,7 +52,39 @@ exports.handler = async (event) => {
     ExpressionAttributeNames: { '#s': 'status' },
     ExpressionAttributeValues: marshall({
       ':s': 'EXPIRED',
-      ':u': new Date().toISOString(),
+      ':u': updatedAt,
     }),
   }));
+
+  // Informa o sistema de origem que a cobrança expirou (best-effort, mesmo payload do callback de PAID/REJECTED)
+  if (record?.callback_url) {
+    const callbackPayload = {
+      order_id:        record.order_id,
+      idempotency_key: record.idempotency_key,
+      status:          'EXPIRED',
+      amount_cents:    record.amount_cents,
+      currency:        record.currency,
+      description:     record.description,
+      customer:        record.customer,
+      items:           record.items,
+      payment_link:    record.payment_link ?? null,
+      mp_payment_id:   record.mp_payment_id ?? null,
+      created_at:      record.created_at,
+      updated_at:      updatedAt,
+      metadata:        record.metadata ?? {},
+    };
+
+    try {
+      const res = await fetch(record.callback_url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(callbackPayload),
+      });
+      if (!res.ok) {
+        console.warn(`callback_url retornou ${res.status} para order ${record.order_id}`);
+      }
+    } catch (err) {
+      console.warn(`Falha ao notificar callback_url para order ${record.order_id}: ${err.message}`);
+    }
+  }
 };

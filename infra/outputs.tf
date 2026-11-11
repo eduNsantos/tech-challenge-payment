@@ -3,6 +3,11 @@ output "webhook_url" {
   value       = "${aws_apigatewayv2_stage.default.invoke_url}webhook"
 }
 
+output "api_base_url" {
+  description = "Base da API do payment-service — valor de PAYMENT_SERVICE_URL no application"
+  value       = trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")
+}
+
 output "orders_url" {
   description = "URL do endpoint de criação de ordens (POST /orders) para o App/EKS"
   value       = "${aws_apigatewayv2_stage.default.invoke_url}orders"

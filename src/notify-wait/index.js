@@ -5,7 +5,7 @@ const dynamo = new DynamoDBClient({});
 
 exports.handler = async (event) => {
   const { taskToken, input } = event;
-  const { idempotency_key, order_id, payment_link } = input;
+  const { idempotency_key, order_id, payment_link, notification_url } = input;
   const initPoint = payment_link?.Payload?.init_point ?? null;
 
   // Armazena o task token no DynamoDB para o lambda-callback resolver depois
@@ -22,18 +22,25 @@ exports.handler = async (event) => {
     }),
   }));
 
-  // Notifica o servico de origem com o link de pagamento
-  const notifyUrl = process.env.APP_NOTIFICATION_URL;
+  // Notifica o servico de origem com o link de pagamento.
+  // A URL vem na propria mensagem (notification_url); APP_NOTIFICATION_URL fica como fallback global.
+  const notifyUrl = notification_url || process.env.APP_NOTIFICATION_URL;
   if (notifyUrl) {
-    const res = await fetch(notifyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id, payment_link: initPoint, status: 'WAITING_PAYMENT' }),
-    });
+    try {
+      const res = await fetch(notifyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id, payment_link: initPoint, status: 'WAITING_PAYMENT' }),
+      });
 
-    if (!res.ok) {
-      console.warn(`App notification failed with status ${res.status} for order ${order_id}`);
+      if (!res.ok) {
+        console.warn(`App notification failed with status ${res.status} for order ${order_id}`);
+      }
+    } catch (err) {
+      console.warn(`App notification failed for order ${order_id}: ${err.message}`);
     }
+  } else {
+    console.warn(`Sem notification_url/APP_NOTIFICATION_URL para order ${order_id} — link nao entregue ao app`);
   }
 
   // Retorna imediatamente — Step Functions aguarda pelo task token

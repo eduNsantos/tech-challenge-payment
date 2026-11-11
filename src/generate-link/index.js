@@ -20,6 +20,11 @@ function backUrlsConfig() {
   return { back_urls, ...(back_urls.success && { auto_return: 'approved' }) };
 }
 
+// customer.cpf carrega CPF (11 dígitos) ou CNPJ (14 dígitos) — já validado no Step ①
+function documentType(number) {
+  return String(number).length === 14 ? 'CNPJ' : 'CPF';
+}
+
 exports.handler = async (event) => {
   const { order_id, amount_cents, description, customer, items } = event;
   const token = await getMpToken();
@@ -32,7 +37,7 @@ exports.handler = async (event) => {
     payer: {
       name: customer.name,
       email: customer.email,
-      identification: { type: 'CPF', number: customer.cpf },
+      identification: { type: documentType(customer.cpf), number: customer.cpf },
       ...(customer.phone && {
         phone: {
           area_code: customer.phone.slice(3, 5),
