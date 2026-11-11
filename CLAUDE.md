@@ -8,21 +8,25 @@ Tech Challenge FIAP POS — infraestrutura provisionada em Terraform, Lambdas em
 ## Arquitetura
 
 ```
-App/EKS → SQS (payment-orders)
-              ↓
-         λ payment-trigger  (máx 5 concorrentes, poll SQS → StartExecution)
-              ↓
-         Step Functions — SAGA "payment-saga"
-         ① Registrar     → DynamoDB PENDING           (src/register/)
-         ② GerarLink     → Mercado Pago API            (src/generate-link/)
-         ③ NotificarApp  → HTTP POST ao App + DynamoDB WAITING_PAYMENT  (src/notify-wait/)
-         ④ Aguardar      → WaitForTaskToken (30min heartbeat, 48h timeout)
-         ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED → DLQ → SNS  (src/cancel/)
+App/EKS → POST /orders → API Gateway v2 → λ payment-orders-api  (src/orders/)
+                                               → valida payload
+                                               → gera idempotency_key (SHA-256)
+                                               → SQS payment-orders
+                                                       ↓
+                                              λ payment-trigger  (máx 5 concorrentes, poll SQS → StartExecution)
+                                                       ↓
+                                              Step Functions — SAGA "payment-saga"
+                                              ① Registrar     → DynamoDB PENDING           (src/register/)
+                                              ② GerarLink     → Mercado Pago API            (src/generate-link/)
+                                              ③ NotificarApp  → HTTP POST ao App + DynamoDB WAITING_PAYMENT  (src/notify-wait/)
+                                              ④ Aguardar      → WaitForTaskToken (30min heartbeat, 48h timeout)
+                                              ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED → DLQ → SNS  (src/cancel/)
 
 Mercado Pago → POST /webhook → API Gateway v2 → λ payment-callback
                                                → valida HMAC-SHA256 (Secrets Manager)
                                                → GSI order_id-index → task_token
                                                → sendTaskSuccess / sendTaskFailure
+                                               → POST callback_url (best-effort, se presente)
 ```
 
 ### Estados DynamoDB (`payment-saga-state`)
@@ -39,7 +43,7 @@ PENDING → WAITING_PAYMENT → PAID
 |---|---|
 | Linguagem | Node.js 24.x |
 | Infra | Terraform ≥ 1.13.5 |
-| Cloud | AWS (us-east-1) — Account `477478162709` |
+| Cloud | AWS (us-east-1) — Account `008962119864` |
 | Banco | DynamoDB `payment-saga-state` (PAY_PER_REQUEST, GSI `order_id-index`) |
 | Fila | SQS `payment-orders` + DLQ `payment-orders-dlq` |
 | Orquestrador | Step Functions STANDARD `payment-saga` |
@@ -50,12 +54,13 @@ PENDING → WAITING_PAYMENT → PAID
 
 ```
 src/
+  orders/index.js         # POST /orders → valida payload, gera idempotency_key, enfileira SQS
   trigger/index.js        # Poll SQS → StartExecution
   register/index.js       # Step ① — valida CPF/amounts, DynamoDB PENDING
   generate-link/index.js  # Step ② — cria preferência no Mercado Pago
   notify-wait/index.js    # Step ③/④ — salva task token, notifica app
   cancel/index.js         # Step ⑤ — cancela no MP, marca EXPIRED
-  callback/index.js       # Webhook MP → resolve Step Functions
+  callback/index.js       # Webhook MP → resolve Step Functions + notifica callback_url
   package.json
 
 infra/
@@ -69,6 +74,7 @@ infra/
   sns.tf
   secrets.tf
   lambda-build.tf         # null_resource npm ci + archive_file
+  lambda-orders.tf
   lambda-trigger.tf
   lambda-register.tf
   lambda-generate-link.tf
@@ -76,7 +82,7 @@ infra/
   lambda-cancel.tf
   lambda-callback.tf
   step-functions.tf       # ASL inline via jsonencode
-  apigateway.tf           # HTTP API v2 + POST /webhook
+  apigateway.tf           # HTTP API v2 + POST /orders + POST /webhook
   network.tf              # reservado — sem recursos ativos
   outputs.tf
 
@@ -98,7 +104,7 @@ data "aws_iam_role" "lab_role" {
 **Nunca sugerir `aws_iam_role`, `aws_iam_role_policy` ou `aws_iam_role_policy_attachment`.**
 
 ### Backend Terraform
-- Bucket S3: `techchallenge-tfstate-477478162709`
+- Bucket S3: `techchallenge-tfstate-008962119864`
 - Key: `payment-service/terraform.tfstate`
 - Arquivo local (gitignore): `infra/backend.hcl`
 

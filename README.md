@@ -135,13 +135,13 @@ terraform apply
 Ao final, o Terraform exibe os outputs:
 
 ```
-orders_url                 = "https://xxx.execute-api.us-east-1.amazonaws.com/orders"
-webhook_url                = "https://xxx.execute-api.us-east-1.amazonaws.com/webhook"
-payment_orders_queue_url   = "https://sqs.us-east-1.amazonaws.com/<account>/payment-orders"
-payment_orders_queue_arn   = "arn:aws:sqs:us-east-1:<account>:payment-orders"
-state_machine_arn          = "arn:aws:states:us-east-1:<account>:stateMachine:payment-saga"
+orders_url                 = "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/orders"
+webhook_url                = "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook"
+payment_orders_queue_url   = "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders"
+payment_orders_queue_arn   = "arn:aws:sqs:us-east-1:008962119864:payment-orders"
+state_machine_arn          = "arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga"
 dynamodb_table_name        = "payment-saga-state"
-dlq_url                    = "https://sqs.us-east-1.amazonaws.com/<account>/payment-orders-dlq"
+dlq_url                    = "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders-dlq"
 ```
 
 ### Deploy via CI/CD (GitHub Actions)

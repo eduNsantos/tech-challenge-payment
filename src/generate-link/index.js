@@ -55,9 +55,10 @@ exports.handler = async (event) => {
   }
 
   const preference = await response.json();
+  const isSandbox = token.startsWith('TEST-');
 
   return {
     preference_id: preference.id,
-    init_point: preference.init_point,
+    init_point: isSandbox ? preference.sandbox_init_point : preference.init_point,
   };
 };
