@@ -117,11 +117,12 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-TF_VAR_mp_access_token
-TF_VAR_mp_webhook_secret
+MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
+MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
 TF_VAR_app_notification_url
 ```
-Pipeline em push para `main`: `npm test` → `terraform init` → `terraform plan` → `terraform apply`.
+Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
+As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
 ## Campo `callback_url` na mensagem SQS
 

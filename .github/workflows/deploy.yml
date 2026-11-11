@@ -53,8 +53,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TF_VAR_mp_access_token:      ${{ secrets.TF_VAR_mp_access_token }}
-      TF_VAR_mp_webhook_secret:    ${{ secrets.TF_VAR_mp_webhook_secret }}
+      TF_VAR_mp_access_token:      ${{ secrets.MP_ACCESS_TOKEN }}
+      TF_VAR_mp_webhook_secret:    ${{ secrets.MP_WEBHOOK_SECRET }}
       TF_VAR_app_notification_url: ${{ secrets.TF_VAR_app_notification_url }}
 
     steps:
