@@ -481,7 +481,6 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-TF_VAR_mp_access_token       # Token do Mercado Pago
 TF_VAR_mp_webhook_secret     # Secret do webhook MP
 TF_VAR_app_notification_url  # URL do App para receber o link de pagamento
 ```

@@ -37,3 +37,8 @@ output "dlq_url" {
   description = "URL da Dead-Letter Queue"
   value       = aws_sqs_queue.dlq.url
 }
+
+output "app_notification_url" {
+  description = "Fallback de notification_url usado pela lambda notify-wait (vazio = sem fallback)"
+  value       = local.app_notification_url
+}

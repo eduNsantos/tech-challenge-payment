@@ -11,7 +11,7 @@ resource "aws_lambda_function" "notify_wait" {
   environment {
     variables = {
       DYNAMODB_TABLE       = aws_dynamodb_table.payment_saga.name
-      APP_NOTIFICATION_URL = var.app_notification_url
+      APP_NOTIFICATION_URL = local.app_notification_url
     }
   }
 }

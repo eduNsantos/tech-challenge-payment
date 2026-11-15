@@ -43,7 +43,7 @@ PENDING → WAITING_PAYMENT → PAID
 |---|---|
 | Linguagem | Node.js 24.x |
 | Infra | Terraform ≥ 1.13.5 |
-| Cloud | AWS (us-east-1) — Account `008962119864` |
+| Cloud | AWS (us-east-1) — Account `477478162709` |
 | Banco | DynamoDB `payment-saga-state` (PAY_PER_REQUEST, GSI `order_id-index`) |
 | Fila | SQS `payment-orders` + DLQ `payment-orders-dlq` |
 | Orquestrador | Step Functions STANDARD `payment-saga` |
@@ -65,10 +65,10 @@ src/
 
 infra/
   bootstrap/main.tf       # Cria bucket S3 de state (roda 1× por conta)
-  providers.tf            # Backend S3 partial + providers
+  providers.tf            # Backend S3 + providers
   variables.tf
   data.tf                 # aws_caller_identity
-  iam.tf                  # Apenas data source da LabRole (sem criar roles)
+  iam.tf                  # Roles das Lambdas e da Step Functions
   dynamodb.tf
   sqs.tf
   sns.tf
@@ -92,21 +92,14 @@ docs/                     # Documentação da arquitetura SAGA
 
 ## Constraints críticos
 
-### AWS Academy — LabRole
-O ambiente AWS Academy **bloqueia `iam:CreateRole` via SCP**. Nenhuma IAM role pode ser criada.
-Toda a infra usa a role pré-existente `LabRole`:
-```hcl
-data "aws_iam_role" "lab_role" {
-  name = "LabRole"
-}
-# Uso: role = data.aws_iam_role.lab_role.arn
-```
-**Nunca sugerir `aws_iam_role`, `aws_iam_role_policy` ou `aws_iam_role_policy_attachment`.**
+### IAM
+A conta `477478162709` não tem a `LabRole` do AWS Academy. O `infra/iam.tf` cria roles próprias com escopo mínimo:
+- `payment-ms-lambda` — usada por todas as Lambdas (DynamoDB, Secrets Manager, SQS, Step Functions)
+- `payment-ms-step-functions` — usada pela state machine (invoca as Lambdas e envia para a DLQ)
 
 ### Backend Terraform
-- Bucket S3: `techchallenge-tfstate-008962119864`
+- Bucket S3: `techchallenge-tfstate-477478162709-v2` (fixo em `providers.tf`, igual aos outros repos)
 - Key: `payment-service/terraform.tfstate`
-- Arquivo local (gitignore): `infra/backend.hcl`
 
 ### Secrets Manager com `recovery_window_in_days = 30`
 Para destruir e recriar imediatamente, o CI faz `aws secretsmanager restore-secret` primeiro.
@@ -117,12 +110,12 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
-TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url em cada mensagem
+TF_VAR_app_notification_url  # opcional — fallback; vazio = descoberto pelo ELB do postech-app no EKS
 ```
-Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
-As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
+Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch`, com as credenciais AWS dos secrets do repositório.
+A variável `mp_webhook_secret` tem `validation` contra valor vazio — evita sobrescrever o secret com string vazia.
+O access token do MP **não** passa pelo deploy: o Terraform só cria `payment/mp-access-token`; o valor é gravado com `aws secretsmanager put-secret-value` (ver README).
 
 ## Campos `notification_url` e `callback_url` na mensagem SQS
 
