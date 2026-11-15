@@ -18,10 +18,10 @@ App/EKS → POST /orders → λ Orders → SQS (payment-orders)
                                           ▼
                                      Step Functions — SAGA
                                      ① REGISTRAR   → DynamoDB (PENDING)
-                                     ② GERAR LINK  → Mercado Pago API (retry 3× backoff)
+                                     ② GERAR LINK  → Mercado Pago API (retry 3× backoff; falhou → nova tentativa após 1 dia, até 3×)
                                      ③ NOTIFICAR   → App + DynamoDB (WAITING_PAYMENT) + salva task token
                                      ④ AGUARDAR    → WaitForTaskToken (heartbeat 30min, timeout 48h)
-                                     ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) → DLQ → SNS
+                                     ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) + callback_url → DLQ
 
 Mercado Pago → POST /webhook → API Gateway → λ Callback
                                              → valida HMAC-SHA256
@@ -39,7 +39,7 @@ Mercado Pago → POST /webhook → API Gateway → λ Callback
 | Terraform | 1.13.5 | https://developer.hashicorp.com/terraform/install |
 | Node.js | 24.x | https://nodejs.org |
 | AWS CLI | 2.x | https://aws.amazon.com/cli |
-| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, SNS, IAM |
+| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, IAM |
 
 ---
 
@@ -549,7 +549,6 @@ tech-challenge-payment-service/
 │   ├── network.tf                # (reservado — sem recursos ativos)
 │   ├── sqs.tf                    # Fila payment-orders + DLQ
 │   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
-│   ├── sns.tf                    # Tópico payment-dlq-notifications
 │   ├── secrets.tf                # mp-access-token + mp-webhook-secret
 │   ├── iam.tf                    # Data source da LabRole (AWS Academy não permite criar roles)
 │   ├── lambda-build.tf           # null_resource (npm ci) + archive_file

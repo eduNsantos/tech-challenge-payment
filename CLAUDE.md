@@ -17,10 +17,10 @@ App/EKS → POST /orders → API Gateway v2 → λ payment-orders-api  (src/orde
                                                        ↓
                                               Step Functions — SAGA "payment-saga"
                                               ① Registrar     → DynamoDB PENDING           (src/register/)
-                                              ② GerarLink     → Mercado Pago API            (src/generate-link/)
+                                              ② GerarLink     → Mercado Pago API            (src/generate-link/) — falhou 3x → Wait 1 dia → tenta de novo (até 3×) → DLQ
                                               ③ NotificarApp  → HTTP POST em notification_url (fallback APP_NOTIFICATION_URL) + DynamoDB WAITING_PAYMENT  (src/notify-wait/)
                                               ④ Aguardar      → WaitForTaskToken (30min heartbeat, 48h timeout)
-                                              ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED + POST callback_url (EXPIRED) → DLQ → SNS  (src/cancel/)
+                                              ⑤ Cancelar      → MP best-effort + DynamoDB EXPIRED + POST callback_url (EXPIRED) → DLQ  (src/cancel/)
 
 Mercado Pago → POST /webhook → API Gateway v2 → λ payment-callback
                                                → valida HMAC-SHA256 (Secrets Manager)
@@ -72,7 +72,6 @@ infra/
   iam.tf                  # Apenas data source da LabRole (sem criar roles)
   dynamodb.tf
   sqs.tf
-  sns.tf
   secrets.tf
   lambda-build.tf         # null_resource npm ci + archive_file
   lambda-orders.tf
@@ -127,6 +126,7 @@ NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o 
 NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
+Nova tentativa do link: `link_retry_wait_seconds` (padrão 86400) e `link_retry_max_attempts` (padrão 3) em `infra/variables.tf`. Para testar, use espera curta (≥ 60s). Só falhas do passo ② voltam ao ciclo; `EXPIRED` não. Não há SNS: a DLQ só retém as mensagens (14 dias).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
 ## Monitoramento — New Relic
