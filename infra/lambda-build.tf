@@ -5,7 +5,8 @@ resource "null_resource" "lambda_deps" {
   }
 
   provisioner "local-exec" {
-    command     = "cd ${path.module}/../src && npm ci --no-fund --no-audit"
+    # Só dependências de produção no pacote (jest e cucumber ficam fora do zip)
+    command     = "cd ${path.module}/../src && npm ci --omit=dev --no-fund --no-audit"
     interpreter = ["bash", "-c"]
   }
 }
@@ -14,7 +15,7 @@ data "archive_file" "payment_lambdas" {
   type        = "zip"
   source_dir  = "${path.module}/../src"
   output_path = "${path.module}/../build/payment-lambdas.zip"
-  excludes    = ["test", "*.test.js"]
+  excludes    = ["test", "*.test.js", "features", "cucumber.js"]
 
   depends_on = [null_resource.lambda_deps]
 }
