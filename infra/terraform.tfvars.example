@@ -1,9 +1,10 @@
 # Copie para terraform.tfvars e preencha os valores reais
 # NUNCA commite terraform.tfvars — ele esta no .gitignore
 
-mp_access_token      = "APP_USR-..."    # Painel MP: Configuracoes > Credenciais
+# mp_access_token NAO vai aqui: vem do secret MP_ACCESS_TOKEN do GitHub (o deploy grava no Secrets Manager)
 mp_webhook_secret    = "..."            # Painel MP: Configuracoes > Notificacoes > Chave secreta
-app_notification_url = "https://<app-publico>/api/payment/notification"   # endpoint do application que recebe o link de pagamento (Step ③)
+# Opcional — sem valor, o Terraform descobre o ELB do Service postech/postech-app no EKS:
+# app_notification_url = "http://<app-publico>:8080/api/payment/notification"
 
 # Opcionais — back_urls do Checkout Pro (HTTPS com DNS; localhost nao e aceito pelo MP)
 # checkout_back_url_success = "https://app.example.com/checkout/success"

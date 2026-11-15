@@ -1,6 +1,6 @@
 resource "aws_lambda_function" "orders" {
   function_name    = "payment-orders-api"
-  role             = data.aws_iam_role.lab_role.arn
+  role             = aws_iam_role.payment_lambda.arn
   runtime          = "nodejs24.x"
   handler          = local.newrelic_enabled ? local.newrelic_wrapper_handler : "orders/index.handler"
   layers           = local.newrelic_layers

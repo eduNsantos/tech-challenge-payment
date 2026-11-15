@@ -1,6 +1,6 @@
 resource "aws_sfn_state_machine" "payment_saga" {
   name     = "payment-saga"
-  role_arn = data.aws_iam_role.lab_role.arn
+  role_arn = aws_iam_role.payment_sfn.arn
   type     = "STANDARD"
 
   # A definição (ASL) fica em state-machine/payment-saga.asl.json para ser a mesma

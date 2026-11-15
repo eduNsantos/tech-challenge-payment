@@ -65,7 +65,6 @@ cp infra/terraform.tfvars.example infra/terraform.tfvars
 Editar `infra/terraform.tfvars` com os valores reais:
 
 ```hcl
-mp_access_token      = "APP_USR-..."    # Access Token de produção da aplicação do VENDEDOR (ver "Configurar o Mercado Pago")
 mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA aplicação
 # app_notification_url = "https://..."  # Opcional — fallback; o application envia notification_url em cada pedido
 
@@ -76,6 +75,10 @@ mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA
 ```
 
 > **Nunca commite `terraform.tfvars`** — ele está no `.gitignore`.
+>
+> O Access Token do Mercado Pago **não** é variável Terraform: vem do secret `MP_ACCESS_TOKEN` do GitHub,
+> que o workflow de deploy grava direto no Secrets Manager (`payment/mp-access-token`) após o apply.
+> Em apply local o token não é alterado.
 
 ### 3. Configurar credenciais AWS
 
@@ -155,7 +158,7 @@ Secrets do repositório (*Settings > Secrets and variables > Actions*):
 
 | Secret | Vira a variável Terraform | Descrição |
 |---|---|---|
-| `MP_ACCESS_TOKEN` | `mp_access_token` | Access Token `APP_USR-...` da aplicação do vendedor |
+| `MP_ACCESS_TOKEN` | — (gravado direto em `payment/mp-access-token` no Secrets Manager) | Access Token `APP_USR-...` da aplicação do vendedor |
 | `MP_WEBHOOK_SECRET` | `mp_webhook_secret` | Assinatura secreta do Webhook da mesma aplicação |
 | `TF_VAR_app_notification_url` | `app_notification_url` | Opcional — fallback quando a mensagem não traz `notification_url` (o application sempre envia) |
 | `NEW_RELIC_LICENSE_KEY` | `newrelic_license_key` | Opcional — license key **INGEST - LICENSE** do New Relic (mesmo nome do repo `tech-challenge-kubernetes`) |
@@ -170,8 +173,9 @@ gh secret set NEW_RELIC_LICENSE_KEY   # pede o valor sem ecoar
 gh secret set NEW_RELIC_ACCOUNT_ID
 ```
 
-> `mp_access_token` e `mp_webhook_secret` têm `validation` contra valor vazio: se o secret não existir
-> ou estiver com nome errado, o `terraform plan` falha em vez de sobrescrever o Secrets Manager com string vazia.
+> Ambos são checados contra valor vazio: se o secret não existir ou estiver com nome errado, o deploy falha
+> antes do apply (step *Check MP access token* para o token; `validation` de `mp_webhook_secret` no `terraform plan`)
+> em vez de sobrescrever o Secrets Manager com string vazia.
 
 Comportamento do pipeline:
 
@@ -180,9 +184,8 @@ Comportamento do pipeline:
 | Push na `main` | Apenas **Test** (`npm test` + `npm run test:bdd`) |
 | *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy** (`terraform init/plan/apply`) |
 
-O deploy manual pede como inputs `aws_access_key_id`, `aws_secret_access_key` e `aws_session_token`
-— copie de *AWS Academy > AWS Details > AWS CLI* (expiram em ~3h; são mascarados no log).
-O bucket do Terraform state é derivado automaticamente via `aws sts get-caller-identity`.
+O deploy usa as credenciais dos secrets `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` do repositório;
+não há inputs no *Run workflow*. O bucket do Terraform state é fixo em `infra/providers.tf`.
 
 ---
 
