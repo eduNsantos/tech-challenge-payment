@@ -62,6 +62,14 @@ src/
   cancel/index.js         # Step ⑤ — cancela no MP, marca EXPIRED
   callback/index.js       # Webhook MP → resolve Step Functions + notifica callback_url
   lib/monitoring.js       # recordSagaEvent → custom event PaymentSaga no New Relic (no-op sem a layer)
+  test/                   # Jest (unitários) — npm test
+  features/               # Cucumber (BDD da SAGA) — npm run test:bdd
+    saga_pagamento.feature
+    step_definitions/saga.steps.js
+    support/asl-interpreter.js  # executa a ASL real (Task/Pass/Choice/Wait, Retry/Catch)
+    support/aws-fakes.js        # DynamoDB/SQS/SFN/Secrets/MP/app em memória (patch em Client.prototype.send)
+    support/world.js
+  cucumber.js
   package.json
 
 infra/
@@ -73,7 +81,7 @@ infra/
   dynamodb.tf
   sqs.tf
   secrets.tf
-  lambda-build.tf         # null_resource npm ci + archive_file
+  lambda-build.tf         # null_resource npm ci --omit=dev + archive_file (exclui test/ e features/)
   lambda-orders.tf
   lambda-trigger.tf
   lambda-register.tf
@@ -81,7 +89,8 @@ infra/
   lambda-notify-wait.tf
   lambda-cancel.tf
   lambda-callback.tf
-  step-functions.tf       # ASL inline via jsonencode
+  step-functions.tf       # templatefile da ASL → jsonencode(jsondecode()) (mesma string da antiga versão inline)
+  state-machine/payment-saga.asl.json  # definição da SAGA — fonte única para o Terraform e o BDD
   apigateway.tf           # HTTP API v2 + POST /orders + POST /webhook
   monitoring.tf           # New Relic: layer + env vars + secret da license key (opcional)
   network.tf              # reservado — sem recursos ativos
@@ -125,9 +134,17 @@ TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_u
 NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
 NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
-Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
+Push para `main` roda só `npm test` + `npm run test:bdd` (Node 24). Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
 Nova tentativa do link: `link_retry_wait_seconds` (padrão 86400) e `link_retry_max_attempts` (padrão 3) em `infra/variables.tf`. Para testar, use espera curta (≥ 60s). Só falhas do passo ② voltam ao ciclo; `EXPIRED` não. Não há SNS: a DLQ só retém as mensagens (14 dias).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
+
+## Testes BDD (Cucumber)
+
+- `src/features/saga_pagamento.feature` (Gherkin em português) roda a ASL de `infra/state-machine/payment-saga.asl.json` com os handlers reais.
+- **Ao mudar a máquina de estados, edite o JSON** (não volte para HCL inline) e rode `npm run test:bdd`; o interpretador falha em tipo de estado/recurso não suportado — estenda `support/asl-interpreter.js`.
+- Handler novo que usa outro cliente AWS: adicione o fake e o patch de `prototype.send` em `support/aws-fakes.js`.
+- Esperas (`Wait`, intervalos de `Retry`) não dormem: ficam no histórico da execução (`WaitStarted`).
+- Documentação geral dos testes BDD da Fase 4: `docs/Fase4/testes-bdd.md` no tech-challenge-application.
 
 ## Monitoramento — New Relic
 

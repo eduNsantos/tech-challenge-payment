@@ -39,11 +39,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Mesmo runtime das Lambdas (nodejs24.x); o Cucumber exige Node 22+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Install and test
         run: |
           cd src
           npm ci
           npm test
+          npm run test:bdd
 
   deploy:
     name: Deploy

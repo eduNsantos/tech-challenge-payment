@@ -1,0 +1,147 @@
+{
+  "Comment": "SAGA orquestrada para processamento de pagamento via Mercado Pago",
+  "StartAt": "Registrar",
+  "States": {
+    "Registrar": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${register_function_arn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SagaFalhou",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "IniciarTentativas"
+    },
+    "IniciarTentativas": {
+      "Type": "Pass",
+      "Result": { "count": 0 },
+      "ResultPath": "$.link_retry",
+      "Next": "GerarLink"
+    },
+    "GerarLink": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${generate_link_function_arn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.payment_link",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "MaxDelaySeconds": 10
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PodeTentarDeNovo",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotificarEAguardar"
+    },
+    "PodeTentarDeNovo": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.link_retry.count",
+          "NumericLessThan": ${link_retry_max_attempts},
+          "Next": "AguardarNovaTentativa"
+        }
+      ],
+      "Default": "EnviarParaDLQ"
+    },
+    "AguardarNovaTentativa": {
+      "Type": "Wait",
+      "Seconds": ${link_retry_wait_seconds},
+      "Next": "ContarTentativa"
+    },
+    "ContarTentativa": {
+      "Type": "Pass",
+      "Parameters": {
+        "count.$": "States.MathAdd($.link_retry.count, 1)"
+      },
+      "ResultPath": "$.link_retry",
+      "Next": "GerarLink"
+    },
+    "NotificarEAguardar": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${notify_wait_function_arn}",
+        "Payload": {
+          "taskToken.$": "$$.Task.Token",
+          "input.$": "$"
+        }
+      },
+      "HeartbeatSeconds": 1800,
+      "TimeoutSeconds": 172800,
+      "ResultPath": "$.callback_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.HeartbeatTimeout", "States.Timeout"],
+          "Next": "Cancelar",
+          "ResultPath": "$.error"
+        },
+        {
+          "ErrorEquals": ["PaymentRejected"],
+          "Next": "PagamentoRejeitado",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "PagamentoAprovado"
+    },
+    "Cancelar": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${cancel_function_arn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": null,
+      "Next": "EnviarParaDLQ"
+    },
+    "EnviarParaDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${dlq_url}",
+        "MessageBody.$": "States.JsonToString($)"
+      },
+      "ResultPath": null,
+      "Next": "SagaFalhou"
+    },
+    "PagamentoAprovado": {
+      "Type": "Succeed"
+    },
+    "PagamentoRejeitado": {
+      "Type": "Fail",
+      "Error": "PaymentRejected",
+      "Cause": "Pagamento rejeitado pelo gateway de pagamento"
+    },
+    "SagaFalhou": {
+      "Type": "Fail",
+      "Error": "SagaFailed",
+      "Cause": "SAGA encerrada com falha definitiva"
+    }
+  }
+}
