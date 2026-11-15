@@ -5,19 +5,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      aws_access_key_id:
-        description: 'AWS Access Key ID (Academy — expira em ~3h)'
-        required: true
-        type: string
-      aws_secret_access_key:
-        description: 'AWS Secret Access Key'
-        required: true
-        type: string
-      aws_session_token:
-        description: 'AWS Session Token (Academy obrigatório)'
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -48,7 +35,7 @@ jobs:
   deploy:
     name: Deploy
     needs: test
-    # Só roda via workflow_dispatch — credenciais Academy expiram em ~3h
+    # Deploy só via execução manual (workflow_dispatch); push na main roda só os testes.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -62,30 +49,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Mascarar antes de qualquer uso para suprimir das logs
-      - name: Mask AWS credentials
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "::add-mask::${{ inputs.aws_access_key_id }}"
-          echo "::add-mask::${{ inputs.aws_secret_access_key }}"
-          echo "::add-mask::${{ inputs.aws_session_token }}"
-
-      - name: Configure AWS credentials (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ inputs.aws_access_key_id }}
-          aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
-          aws-session-token:     ${{ inputs.aws_session_token }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Configure AWS credentials (push)
-        if: github.event_name == 'push'
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region:            ${{ env.AWS_REGION }}
 
       - name: Install Lambda dependencies
