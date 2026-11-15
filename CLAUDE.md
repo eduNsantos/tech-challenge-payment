@@ -110,12 +110,12 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
+MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
 TF_VAR_app_notification_url  # opcional — fallback; vazio = descoberto pelo ELB do postech-app no EKS
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch`, com as credenciais AWS dos secrets do repositório.
-A variável `mp_webhook_secret` tem `validation` contra valor vazio — evita sobrescrever o secret com string vazia.
-O access token do MP **não** passa pelo deploy: o Terraform só cria `payment/mp-access-token`; o valor é gravado com `aws secretsmanager put-secret-value` (ver README).
+As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
 ## Campos `notification_url` e `callback_url` na mensagem SQS
 

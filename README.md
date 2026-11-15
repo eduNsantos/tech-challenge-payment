@@ -65,6 +65,7 @@ cp infra/terraform.tfvars.example infra/terraform.tfvars
 Editar `infra/terraform.tfvars` com os valores reais:
 
 ```hcl
+mp_access_token      = "APP_USR-..."    # Access Token de produção da aplicação do VENDEDOR (ver "Configurar o Mercado Pago")
 mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA aplicação
 # app_notification_url = "https://..."  # Opcional — fallback; o application envia notification_url em cada pedido
 
@@ -75,9 +76,6 @@ mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA
 ```
 
 > **Nunca commite `terraform.tfvars`** — ele está no `.gitignore`.
->
-> O Access Token do Mercado Pago **não** passa pelo Terraform: o deploy só cria o secret
-> `payment/mp-access-token`, e o valor é gravado direto no Secrets Manager (ver "Publicar as credenciais").
 
 ### 3. Configurar credenciais AWS
 
@@ -157,18 +155,19 @@ Secrets do repositório (*Settings > Secrets and variables > Actions*):
 
 | Secret | Vira a variável Terraform | Descrição |
 |---|---|---|
+| `MP_ACCESS_TOKEN` | `mp_access_token` | Access Token `APP_USR-...` da aplicação do vendedor |
 | `MP_WEBHOOK_SECRET` | `mp_webhook_secret` | Assinatura secreta do Webhook da mesma aplicação |
 | `TF_VAR_app_notification_url` | `app_notification_url` | Opcional — fallback quando a mensagem não traz `notification_url`. Vazio: o Terraform descobre o ELB do Service `postech/postech-app` no EKS |
 
 Atualizar via CLI (o valor vai por stdin, não aparece no histórico do shell):
 
 ```bash
+printf '%s' 'APP_USR-...' | gh secret set MP_ACCESS_TOKEN
 printf '%s' '<assinatura>' | gh secret set MP_WEBHOOK_SECRET
 ```
 
-> `mp_webhook_secret` tem `validation` contra valor vazio: se o secret não existir
+> `mp_access_token` e `mp_webhook_secret` têm `validation` contra valor vazio: se o secret não existir
 > ou estiver com nome errado, o `terraform plan` falha em vez de sobrescrever o Secrets Manager com string vazia.
-> O Access Token não é secret do GitHub — fica só no Secrets Manager.
 
 Comportamento do pipeline:
 
@@ -252,18 +251,7 @@ senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
 
 ### 4. Publicar as credenciais
 
-Grave o Access Token direto no Secrets Manager (não passa pelo deploy; vale na hora, sem redeploy —
-as Lambdas já aquecidas mantêm o token em cache até o próximo cold start):
-
-```bash
-read -rs MP_TOKEN   # cole o APP_USR-... (não aparece no terminal nem no histórico)
-aws secretsmanager put-secret-value --secret-id payment/mp-access-token \
-  --secret-string "$(jq -cn --arg t "$MP_TOKEN" '{access_token: $t}')"
-unset MP_TOKEN
-```
-
-Em ambiente novo, rode o deploy primeiro (ele cria o secret vazio) e depois grave o token.
-Atualize `MP_WEBHOOK_SECRET` no GitHub e rode o deploy manual.
+Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy manual.
 Com token `APP_USR-` a Lambda devolve o `init_point` (com `TEST-` devolve o `sandbox_init_point`).
 
 ---
@@ -444,7 +432,7 @@ aws stepfunctions get-execution-history \
 
 | Sintoma | Causa | Solução |
 |---|---|---|
-| Step ② falha com `403 PA_UNAUTHORIZED_RESULT_FROM_POLICIES` | Access token vazio ou inválido no Secrets Manager | Regrave o token com `put-secret-value` (ver "Publicar as credenciais"); valide o token com `/users/me` |
+| Step ② falha com `403 PA_UNAUTHORIZED_RESULT_FROM_POLICIES` | Access token vazio ou inválido no Secrets Manager | Confira `MP_ACCESS_TOKEN` no GitHub e refaça o deploy; valide o token com `/users/me` |
 | Checkout: *"Uma das partes ... é de teste"* | Vendedor real + comprador de teste (ou vice-versa) | Use credenciais `APP_USR-` de um **vendedor de teste** e pague com outro **comprador de teste** |
 | Webhook do pagamento com `signature_valid:false` | `MP_WEBHOOK_SECRET` de outra aplicação | Copie a assinatura secreta da aplicação dona do token e refaça o deploy |
 | Logs com `data_id:null`, `signature_valid:false` (inclusive `merchant_order`) | Notificações no formato antigo (IPN), sem assinatura | Inofensivo — o MP reenvia por alguns dias; o pagamento chega pelo webhook assinado |
