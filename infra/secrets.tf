@@ -4,8 +4,9 @@ resource "aws_secretsmanager_secret" "mp_access_token" {
   recovery_window_in_days = 30
 }
 
-# O valor do access token NAO passa pelo deploy: e gravado direto no Secrets Manager
-# (ver README "Publicar as credenciais"). O Terraform so gerencia o secret em si.
+# O valor do access token NAO e variavel Terraform: o workflow de deploy grava o secret
+# MP_ACCESS_TOKEN do GitHub direto no Secrets Manager apos o apply (fica fora do state).
+# O Terraform so gerencia o secret em si.
 # O `removed` tira a versao antiga do state sem apagar o valor ja gravado na AWS.
 removed {
   from = aws_secretsmanager_secret_version.mp_access_token

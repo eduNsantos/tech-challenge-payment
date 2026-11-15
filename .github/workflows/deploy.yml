@@ -41,12 +41,22 @@ jobs:
 
     env:
       TF_VAR_mp_webhook_secret:    ${{ secrets.MP_WEBHOOK_SECRET }}
+      # Não vira variável Terraform: é gravado direto no Secrets Manager após o apply (fica fora do state).
+      MP_ACCESS_TOKEN:             ${{ secrets.MP_ACCESS_TOKEN }}
       # Opcional: o application envia notification_url em cada pedido. Só serve de fallback.
       TF_VAR_app_notification_url: ${{ secrets.TF_VAR_app_notification_url }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Falha antes do apply se o secret do GitHub não existir (evita gravar token vazio)
+      - name: Check MP access token
+        run: |
+          if [ -z "$(printf '%s' "$MP_ACCESS_TOKEN" | tr -d '[:space:]')" ]; then
+            echo "::error::Secret MP_ACCESS_TOKEN vazio ou ausente no GitHub."
+            exit 1
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -137,6 +147,17 @@ jobs:
       - name: Terraform apply
         working-directory: infra
         run: terraform apply -auto-approve
+
+      # O secret payment/mp-access-token é criado pelo Terraform (apply acima); o valor vem do GitHub.
+      - name: Publish MP access token
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws secretsmanager put-secret-value \
+            --secret-id payment/mp-access-token \
+            --region "$AWS_REGION" \
+            --secret-string "$(jq -cn --arg t "$MP_ACCESS_TOKEN" '{access_token: $t}')" \
+            --query VersionId --output text
 
       # URLs que o application e o Mercado Pago precisam — copie para PAYMENT_SERVICE_URL no app
       - name: Publish integration URLs

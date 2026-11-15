@@ -3,17 +3,6 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "mp_access_token" {
-  type        = string
-  sensitive   = true
-  description = "Access token de producao do Mercado Pago"
-
-  validation {
-    condition     = length(trimspace(var.mp_access_token)) > 0
-    error_message = "mp_access_token vazio — verifique o secret MP_ACCESS_TOKEN no GitHub ou o terraform.tfvars."
-  }
-}
-
 variable "mp_webhook_secret" {
   type        = string
   sensitive   = true
