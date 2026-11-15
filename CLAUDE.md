@@ -61,6 +61,7 @@ src/
   notify-wait/index.js    # Step ③/④ — salva task token, notifica app
   cancel/index.js         # Step ⑤ — cancela no MP, marca EXPIRED
   callback/index.js       # Webhook MP → resolve Step Functions + notifica callback_url
+  lib/monitoring.js       # recordSagaEvent → custom event PaymentSaga no New Relic (no-op sem a layer)
   package.json
 
 infra/
@@ -83,6 +84,7 @@ infra/
   lambda-callback.tf
   step-functions.tf       # ASL inline via jsonencode
   apigateway.tf           # HTTP API v2 + POST /orders + POST /webhook
+  monitoring.tf           # New Relic: layer + env vars + secret da license key (opcional)
   network.tf              # reservado — sem recursos ativos
   outputs.tf
 
@@ -112,7 +114,9 @@ AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
 MP_ACCESS_TOKEN            # → gravado direto em payment/mp-access-token (put-secret-value após o apply; não é var Terraform)
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
-TF_VAR_app_notification_url  # opcional — fallback; vazio = descoberto pelo ELB do postech-app no EKS
+TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url em cada mensagem
+NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
+NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch`, com as credenciais AWS dos secrets do repositório.
 `mp_webhook_secret` tem `validation` contra valor vazio, e o step *Check MP access token* barra `MP_ACCESS_TOKEN` vazio — evita sobrescrever os secrets com string vazia.
@@ -131,3 +135,4 @@ Ver schema completo em `bruno/docs/sqs-message-schema.md`.
 - Secrets são buscados com cache via variável de módulo (`let cached...`)
 - Idempotência: `idempotency_key = SHA-256(order_id|amount_cents|created_at)` — gerado pelo produtor
 - O `idempotency_key` é o `name` da execução no Step Functions (rejeição nativa de duplicatas)
+- Monitoramento: `require('../lib/monitoring')` + `recordSagaEvent(step, status, attrs)` — nunca enviar dados pessoais. O pacote `newrelic` vem da layer, não do package.json. Ver `docs/monitoring.md`

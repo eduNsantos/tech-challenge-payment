@@ -1,5 +1,6 @@
 const { DynamoDBClient, PutItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall } = require('@aws-sdk/util-dynamodb');
+const { recordSagaEvent } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 
@@ -87,6 +88,10 @@ exports.handler = async (event) => {
     }),
     ConditionExpression: 'attribute_not_exists(idempotency_key)',
   }));
+
+  recordSagaEvent('register', 'PENDING', {
+    orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, currency, documentType,
+  });
 };
 
 exports.validateCpf = validateCpf;

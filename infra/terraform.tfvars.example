@@ -10,3 +10,7 @@ mp_webhook_secret    = "..."            # Painel MP: Configuracoes > Notificacoe
 # checkout_back_url_success = "https://app.example.com/checkout/success"
 # checkout_back_url_pending = "https://app.example.com/checkout/pending"
 # checkout_back_url_failure = "https://app.example.com/checkout/failure"
+
+# Opcionais — New Relic (monitoramento ligado com os dois preenchidos). Ver docs/monitoring.md
+# newrelic_license_key = "...NRAL"        # API keys > INGEST - LICENSE
+# newrelic_account_id  = "1234567"

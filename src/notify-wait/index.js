@@ -1,5 +1,6 @@
 const { DynamoDBClient, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall } = require('@aws-sdk/util-dynamodb');
+const { recordSagaEvent } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 
@@ -25,6 +26,7 @@ exports.handler = async (event) => {
   // Notifica o servico de origem com o link de pagamento.
   // A URL vem na propria mensagem (notification_url); APP_NOTIFICATION_URL fica como fallback global.
   const notifyUrl = notification_url || process.env.APP_NOTIFICATION_URL;
+  let appNotified = false;
   if (notifyUrl) {
     try {
       const res = await fetch(notifyUrl, {
@@ -33,6 +35,7 @@ exports.handler = async (event) => {
         body: JSON.stringify({ order_id, payment_link: initPoint, status: 'WAITING_PAYMENT' }),
       });
 
+      appNotified = res.ok;
       if (!res.ok) {
         console.warn(`App notification failed with status ${res.status} for order ${order_id}`);
       }
@@ -42,6 +45,10 @@ exports.handler = async (event) => {
   } else {
     console.warn(`Sem notification_url/APP_NOTIFICATION_URL para order ${order_id} — link nao entregue ao app`);
   }
+
+  recordSagaEvent('notify-wait', 'WAITING_PAYMENT', {
+    orderId: order_id, idempotencyKey: idempotency_key, hasPaymentLink: Boolean(initPoint), appNotified,
+  });
 
   // Retorna imediatamente — Step Functions aguarda pelo task token
 };
