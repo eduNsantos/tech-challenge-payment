@@ -130,7 +130,7 @@ jobs:
 
               if ! terraform state show "$TF_RESOURCE" >/dev/null 2>&1; then
                 echo "Importing $TF_RESOURCE"
-                terraform import "$TF_RESOURCE" "$SECRET_ARN"
+                terraform import -input=false "$TF_RESOURCE" "$SECRET_ARN"
               fi
             else
               echo "Secret $SECRET_NAME nao existe, Terraform ira criar."
@@ -142,11 +142,11 @@ jobs:
 
       - name: Terraform plan
         working-directory: infra
-        run: terraform plan
+        run: terraform plan -input=false
 
       - name: Terraform apply
         working-directory: infra
-        run: terraform apply -auto-approve
+        run: terraform apply -input=false -auto-approve
 
       # O secret payment/mp-access-token é criado pelo Terraform (apply acima); o valor vem do GitHub.
       - name: Publish MP access token
