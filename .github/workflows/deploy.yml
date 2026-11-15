@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  # Check obrigatório (Test) da regra de proteção da main; o job Deploy só roda em workflow_dispatch
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       aws_access_key_id:
@@ -23,7 +27,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: payment-service-deploy
+  # PRs ficam num grupo próprio para não cancelar um deploy manual na fila
+  group: ${{ github.event_name == 'pull_request' && format('payment-service-pr-{0}', github.ref) || 'payment-service-deploy' }}
   cancel-in-progress: false
 
 env:
