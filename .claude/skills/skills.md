@@ -607,3 +607,25 @@ SELECT count(*) FROM Transaction, Span, Log WHERE appName = 'payment-service' FA
 Ao criar um evento novo, adicionar widget no JSON e a linha na tabela de eventos de `docs/monitoring.md`.
 
 **Pedidos de teste:** valor total entre R$ 5,00 e R$ 6,00 (`amount_cents` 500–600).
+
+---
+
+## test-bdd
+
+Roda e estende os testes BDD da SAGA (Cucumber + Gherkin em português).
+
+```bash
+cd src
+npm run test:bdd                                   # todos os cenários
+npx cucumber-js --tags @compensacao                # só uma tag (@caminho-feliz, @retry, @falha, @idempotencia, @seguranca)
+npx cucumber-js --format pretty                    # mostra cada passo
+```
+
+**Checklist ao mudar a SAGA:**
+- [ ] Editar `infra/state-machine/payment-saga.asl.json` (o Terraform lê via `templatefile`)
+- [ ] Novo placeholder `${...}` no JSON → incluir no `templatefile()` de `infra/step-functions.tf` **e** no `loadDefinition()` de `src/features/support/world.js`
+- [ ] Novo tipo de estado/recurso/função intrínseca → estender `src/features/support/asl-interpreter.js`
+- [ ] Nova Lambda na saga → registrar o ARN em `LAMBDA_ARNS`/`this.lambdas` (`world.js`)
+- [ ] Novo cliente AWS num handler → fake + patch de `prototype.send` em `support/aws-fakes.js`
+- [ ] Cenário em `src/features/saga_pagamento.feature` cobrindo o caminho novo e a compensação
+- [ ] Conferir que um cenário falha quando a regra é quebrada (mudar a ASL de propósito e rodar)

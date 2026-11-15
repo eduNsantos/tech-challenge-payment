@@ -181,11 +181,43 @@ Comportamento do pipeline:
 
 | Gatilho | O que roda |
 |---|---|
-| Push na `main` | Apenas **Test** (`npm test`) |
+| Push na `main` | Apenas **Test** (`npm test` + `npm run test:bdd`) |
 | *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy** (`terraform init/plan/apply`) |
 
 O deploy usa as credenciais dos secrets `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` do repositório;
 não há inputs no *Run workflow*. O bucket do Terraform state é fixo em `infra/providers.tf`.
+
+---
+
+## Testes
+
+```bash
+cd src
+npm ci
+npm test            # unitários (Jest) — src/test/*.test.js
+npm run test:bdd    # BDD (Cucumber) — src/features/*.feature
+```
+
+Os testes BDD descrevem a SAGA em Gherkin (português) e executam a **definição real** da máquina de estados
+(`infra/state-machine/payment-saga.asl.json`) com os handlers reais das Lambdas. DynamoDB, SQS, Step Functions,
+Secrets Manager, Mercado Pago e o application são substituídos por fakes em memória, então não há chamada à AWS.
+
+| Cenário | O que comprova |
+|---|---|
+| Pagamento aprovado | `Registrar → IniciarTentativas → GerarLink → NotificarEAguardar → PagamentoAprovado`, DynamoDB `PAID`, callback `PAID` |
+| Pagamento recusado | Saga falha com `PaymentRejected`, DynamoDB `REJECTED`, callback `REJECTED`, nada na DLQ |
+| Prazo esgotado | Compensação `Cancelar` → `EXPIRED` + callback `EXPIRED` → DLQ |
+| Pagamento pendente (PIX) | Saga continua aguardando |
+| Documento inválido | Falha no `Registrar`, Mercado Pago não é chamado |
+| Instabilidade curta do MP | `Retry` do `GerarLink` (3 chamadas, sem espera diária) |
+| MP fora no 1º dia | Nova tentativa diária gera o link (5 chamadas, 1 espera) |
+| MP fora em todas as tentativas | 16 chamadas, 3 esperas, pedido na DLQ |
+| Pedido duplicado | `ExecutionAlreadyExists` → só uma saga |
+| Webhook com assinatura inválida | 401, saga continua aguardando |
+
+> Mudou a máquina de estados? Edite `infra/state-machine/payment-saga.asl.json` (o Terraform lê esse arquivo
+> com `templatefile`) e rode `npm run test:bdd`. A documentação dos testes BDD de todo o projeto está em
+> `docs/Fase4/testes-bdd.md` no repositório tech-challenge-application.
 
 ---
 
@@ -542,7 +574,10 @@ tech-challenge-payment-service/
 │   ├── notify-wait/index.js      # Step ③/④ — notifica app + WaitForTaskToken
 │   ├── cancel/index.js           # Step ⑤ — cancela gateway + marca EXPIRED
 │   ├── callback/index.js         # Webhook MP → sendTaskSuccess/Failure + callback_url
-│   └── lib/monitoring.js         # recordSagaEvent → custom event PaymentSaga (no-op sem a layer)
+│   ├── lib/monitoring.js         # recordSagaEvent → custom event PaymentSaga (no-op sem a layer)
+│   ├── test/                     # Testes unitários (Jest)
+│   ├── features/                 # Testes BDD (Cucumber): saga_pagamento.feature, steps e fakes
+│   └── cucumber.js               # Configuração do Cucumber
 ├── infra/                        # Infraestrutura Terraform
 │   ├── bootstrap/                # Bootstrap: cria bucket S3 de state (roda uma vez)
 │   │   └── main.tf
@@ -554,7 +589,7 @@ tech-challenge-payment-service/
 │   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
 │   ├── secrets.tf                # mp-access-token + mp-webhook-secret
 │   ├── iam.tf                    # Data source da LabRole (AWS Academy não permite criar roles)
-│   ├── lambda-build.tf           # null_resource (npm ci) + archive_file
+│   ├── lambda-build.tf           # null_resource (npm ci --omit=dev) + archive_file
 │   ├── lambda-trigger.tf
 │   ├── lambda-register.tf
 │   ├── lambda-generate-link.tf
@@ -562,7 +597,8 @@ tech-challenge-payment-service/
 │   ├── lambda-orders.tf
 │   ├── lambda-cancel.tf
 │   ├── lambda-callback.tf
-│   ├── step-functions.tf         # State machine (ASL inline via jsonencode)
+│   ├── step-functions.tf         # State machine (lê a ASL via templatefile)
+│   ├── state-machine/payment-saga.asl.json  # Definição da SAGA (usada também pelos testes BDD)
 │   ├── apigateway.tf             # HTTP API v2 + POST /orders + POST /webhook
 │   ├── monitoring.tf             # New Relic: layer, handler wrapper, secret da license key (opcional)
 │   ├── outputs.tf
