@@ -60,7 +60,6 @@ jobs:
       # New Relic — opcional; com qualquer um vazio o deploy sobe sem monitoramento
       TF_VAR_newrelic_license_key: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
       TF_VAR_newrelic_account_id:  ${{ secrets.NEW_RELIC_ACCOUNT_ID }}
-      TF_VAR_newrelic_layer_arn:   ${{ secrets.NEW_RELIC_LAYER_ARN }}
 
     steps:
       - name: Checkout
@@ -195,7 +194,7 @@ jobs:
           import_secret "payment/mp-webhook-secret" "aws_secretsmanager_secret.mp_webhook_secret"
 
           # Secret do New Relic só existe no Terraform (count = 1) quando o monitoramento está ligado
-          if [ -n "$TF_VAR_newrelic_license_key" ] && [ -n "$TF_VAR_newrelic_account_id" ] && [ -n "$TF_VAR_newrelic_layer_arn" ]; then
+          if [ -n "$TF_VAR_newrelic_license_key" ] && [ -n "$TF_VAR_newrelic_account_id" ]; then
             import_secret "payment/newrelic-license-key" "aws_secretsmanager_secret.newrelic_license_key[0]"
           fi
 

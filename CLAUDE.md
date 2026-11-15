@@ -122,9 +122,8 @@ AWS_SECRET_ACCESS_KEY
 MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
 TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url em cada mensagem
-NEW_RELIC_LICENSE_KEY      # opcional — os 3 NEW_RELIC_* juntos ligam o monitoramento
-NEW_RELIC_ACCOUNT_ID
-NEW_RELIC_LAYER_ARN        # layer NewRelicNodeJS24X em us-east-1 (docs/monitoring.md)
+NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
+NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.

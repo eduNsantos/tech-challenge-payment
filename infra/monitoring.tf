@@ -5,8 +5,7 @@
 locals {
   newrelic_enabled = (
     trimspace(var.newrelic_license_key) != "" &&
-    trimspace(var.newrelic_account_id) != "" &&
-    trimspace(var.newrelic_layer_arn) != ""
+    trimspace(var.newrelic_account_id) != ""
   )
 
   newrelic_layers = local.newrelic_enabled ? [var.newrelic_layer_arn] : []

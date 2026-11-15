@@ -10,7 +10,6 @@ app_notification_url = "https://<app-publico>/api/payment/notification"   # endp
 # checkout_back_url_pending = "https://app.example.com/checkout/pending"
 # checkout_back_url_failure = "https://app.example.com/checkout/failure"
 
-# Opcionais — New Relic (monitoramento ligado só com os três preenchidos). Ver docs/monitoring.md
+# Opcionais — New Relic (monitoramento ligado com os dois preenchidos). Ver docs/monitoring.md
 # newrelic_license_key = "...NRAL"        # API keys > INGEST - LICENSE
 # newrelic_account_id  = "1234567"
-# newrelic_layer_arn   = "arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS24X:<versao>"

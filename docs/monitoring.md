@@ -13,7 +13,7 @@ Lambda (handler = newrelic-lambda-wrapper.handler)
                       → envia telemetria + logs para o New Relic
 ```
 
-O monitoramento é **opcional**: se `newrelic_license_key`, `newrelic_account_id` ou `newrelic_layer_arn`
+O monitoramento é **opcional**: se `newrelic_license_key` ou `newrelic_account_id`
 estiver vazio, as Lambdas sobem sem layer e com o handler original. O secret também não é criado.
 
 ## Configuração
@@ -24,19 +24,21 @@ estiver vazio, as Lambdas sobem sem layer e com o handler original. O secret tam
    Use a mesma conta do app no EKS para os traces aparecerem juntos.
 
 ### Layer ARN
-Escolha a versão mais recente da layer `NewRelicNodeJS24X` em us-east-1:
+Não precisa configurar. A layer é pública (publicada pelo New Relic na conta AWS `451483290750`) e a versão
+fica fixada no default de `newrelic_layer_arn` em `infra/variables.tf`. Para atualizar, consulte a versão mais recente:
 
-- https://layers.newrelic-external.com/ (selecione a região `us-east-1`), ou
-- `aws lambda list-layer-versions --region us-east-1 --layer-name arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS24X`
-
-Se ainda não houver layer para Node 24, use a `NewRelicNodeJS22X` e troque o `runtime` das Lambdas para `nodejs22.x`.
+```bash
+curl -s "https://us-east-1.layers.newrelic-external.com/get-layers?CompatibleRuntime=nodejs24.x" \
+  | jq -r '.Layers[] | select(.LayerName == "NewRelicNodeJS24X") | .LatestMatchingVersion.LayerVersionArn'
+```
 
 ### GitHub Actions — secrets
 | Secret | Variável Terraform |
 |---|---|
 | `NEW_RELIC_LICENSE_KEY` | `newrelic_license_key` |
 | `NEW_RELIC_ACCOUNT_ID` | `newrelic_account_id` |
-| `NEW_RELIC_LAYER_ARN` | `newrelic_layer_arn` |
+
+São os mesmos nomes usados no repo `tech-challenge-kubernetes`.
 
 ## Eventos de negócio — `PaymentSaga`
 

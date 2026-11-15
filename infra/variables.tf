@@ -50,7 +50,7 @@ variable "checkout_back_url_failure" {
 }
 
 # ── New Relic (opcional) ────────────────────────────────────────────────────
-# Monitoramento só é ligado quando license key, account ID e layer ARN estão preenchidos.
+# Monitoramento só é ligado quando license key e account ID estão preenchidos.
 # Com qualquer um vazio, as Lambdas sobem sem layer e com o handler original.
 
 variable "newrelic_license_key" {
@@ -66,13 +66,15 @@ variable "newrelic_account_id" {
   description = "Account ID do New Relic (necessário para distributed tracing)"
 }
 
+# Layer pública publicada pelo New Relic (conta AWS 451483290750) — versão fixada para deploy determinístico.
+# Para atualizar: https://us-east-1.layers.newrelic-external.com/get-layers?CompatibleRuntime=nodejs24.x
 variable "newrelic_layer_arn" {
   type        = string
-  default     = ""
-  description = "ARN da layer New Relic para Node.js em us-east-1, ex.: arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS24X:<versão>"
+  default     = "arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS24X:65" # Extension v2.7.4 + Node agent v14.12.0
+  description = "ARN da layer New Relic para Node.js 24 em us-east-1"
 
   validation {
-    condition     = var.newrelic_layer_arn == "" || can(regex("^arn:aws:lambda:[a-z0-9-]+:451483290750:layer:NewRelicNodeJS[0-9]+X:[0-9]+$", var.newrelic_layer_arn))
+    condition     = can(regex("^arn:aws:lambda:[a-z0-9-]+:451483290750:layer:NewRelicNodeJS[0-9]+X:[0-9]+$", var.newrelic_layer_arn))
     error_message = "newrelic_layer_arn deve ser uma layer NewRelicNodeJS<versão>X publicada pela conta 451483290750, com número de versão."
   }
 }
