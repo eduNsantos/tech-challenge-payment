@@ -18,10 +18,10 @@ App/EKS → POST /orders → λ Orders → SQS (payment-orders)
                                           ▼
                                      Step Functions — SAGA
                                      ① REGISTRAR   → DynamoDB (PENDING)
-                                     ② GERAR LINK  → Mercado Pago API (retry 3× backoff)
+                                     ② GERAR LINK  → Mercado Pago API (retry 3× backoff; falhou → nova tentativa após 1 dia, até 3×)
                                      ③ NOTIFICAR   → App + DynamoDB (WAITING_PAYMENT) + salva task token
                                      ④ AGUARDAR    → WaitForTaskToken (heartbeat 30min, timeout 48h)
-                                     ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) → DLQ → SNS
+                                     ⑤ CANCELAR    → Mercado Pago + DynamoDB (EXPIRED) + callback_url → DLQ
 
 Mercado Pago → POST /webhook → API Gateway → λ Callback
                                              → valida HMAC-SHA256
@@ -39,7 +39,7 @@ Mercado Pago → POST /webhook → API Gateway → λ Callback
 | Terraform | 1.13.5 | https://developer.hashicorp.com/terraform/install |
 | Node.js | 24.x | https://nodejs.org |
 | AWS CLI | 2.x | https://aws.amazon.com/cli |
-| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, SNS, IAM, além de leitura de ELB (`elasticloadbalancing:DescribeLoadBalancers`) e `tag:GetResources` para descobrir a URL do app |
+| Credenciais AWS | — | IAM com permissões para Lambda, SQS, DynamoDB, Step Functions, API Gateway, Secrets Manager, IAM |
 
 ---
 
@@ -160,13 +160,17 @@ Secrets do repositório (*Settings > Secrets and variables > Actions*):
 |---|---|---|
 | `MP_ACCESS_TOKEN` | — (gravado direto em `payment/mp-access-token` no Secrets Manager) | Access Token `APP_USR-...` da aplicação do vendedor |
 | `MP_WEBHOOK_SECRET` | `mp_webhook_secret` | Assinatura secreta do Webhook da mesma aplicação |
-| `TF_VAR_app_notification_url` | `app_notification_url` | Opcional — fallback quando a mensagem não traz `notification_url`. Vazio: o Terraform descobre o ELB do Service `postech/postech-app` no EKS |
+| `TF_VAR_app_notification_url` | `app_notification_url` | Opcional — fallback quando a mensagem não traz `notification_url` (o application sempre envia) |
+| `NEW_RELIC_LICENSE_KEY` | `newrelic_license_key` | Opcional — license key **INGEST - LICENSE** do New Relic (mesmo nome do repo `tech-challenge-kubernetes`) |
+| `NEW_RELIC_ACCOUNT_ID` | `newrelic_account_id` | Opcional — Account ID do New Relic. Com os dois preenchidos o monitoramento liga |
 
 Atualizar via CLI (o valor vai por stdin, não aparece no histórico do shell):
 
 ```bash
 printf '%s' 'APP_USR-...' | gh secret set MP_ACCESS_TOKEN
 printf '%s' '<assinatura>' | gh secret set MP_WEBHOOK_SECRET
+gh secret set NEW_RELIC_LICENSE_KEY   # pede o valor sem ecoar
+gh secret set NEW_RELIC_ACCOUNT_ID
 ```
 
 > Ambos são checados contra valor vazio: se o secret não existir ou estiver com nome errado, o deploy falha
@@ -252,6 +256,9 @@ curl -s -H "Authorization: Bearer APP_USR-..." https://api.mercadopago.com/users
 
 A assinatura é por aplicação: trocou de aplicação, troque também o `MP_WEBHOOK_SECRET`,
 senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
+
+> **O ID do API Gateway muda quando ele é recriado** (lab resetado, `destroy`). Depois de cada deploy, confira se a URL
+> no painel do MP é igual ao output `webhook_url`. Com a URL antiga, o pagamento é aprovado no MP mas nunca chega à SAGA.
 
 ### 4. Publicar as credenciais
 
@@ -341,6 +348,17 @@ aws sqs send-message \
    (nome = `idempotency_key`) para `SUCCEEDED`/`FAILED`, e o log da `payment-callback` deve mostrar
    `"event":"mp_webhook_received" ... "signature_valid":true`.
 
+### Reenviar a notificação pelo simulador do Mercado Pago
+
+Se o pagamento foi aprovado no MP mas a SAGA continua em `WAITING_PAYMENT` (ex.: webhook estava com URL antiga):
+
+1. Na conta do **vendedor de teste**, pegue o **ID do pagamento** em *Atividade* (número como `1234567890`;
+   o UUID da URL `checkout/post-payments/...` é a sessão do checkout, não o pagamento).
+2. *Suas integrações > [aplicação] > Webhooks* → confira a URL → **Simular** → evento **Pagamentos** → cole o ID em `data.id`.
+3. Resposta esperada: `200 {"processed":true,"status":"PAID"}`.
+
+O simulador assina com o secret correto e usa um pagamento real, então percorre o fluxo completo (HMAC → API do MP → DynamoDB → Step Functions).
+
 ### Cartões de teste (Brasil)
 
 | Bandeira | Número | CVV | Validade |
@@ -378,9 +396,46 @@ A collection Bruno em `bruno/` contém 3 cenários prontos:
 
 Abra a pasta `bruno/` no [Bruno](https://www.usebruno.com/) como collection.
 
+> A Lambda `callback` consulta o pagamento em `GET /v1/payments/{id}` no MP. Com o `data.id` fictício dos exemplos
+> (`98765432`) a resposta é `502 Erro ao consultar gateway` — o Bruno valida assinatura e roteamento, não o fluxo `PAID`.
+> Para o fluxo completo use um pagamento real (cartões de teste) ou o simulador do MP com o ID real.
+
 ---
 
 ## Monitoramento
+
+### New Relic
+
+As 7 Lambdas usam a layer `NewRelicNodeJS24X` (agente Node.js + Lambda Extension), que envia traces, erros e logs
+direto ao New Relic com a license key — sem IAM role, compatível com a `LabRole`. Liga sozinho quando os secrets
+`NEW_RELIC_LICENSE_KEY` e `NEW_RELIC_ACCOUNT_ID` existem no repo; sem eles o deploy sobe sem monitoramento.
+Detalhes, eventos e consultas: [`docs/monitoring.md`](docs/monitoring.md).
+
+**Onde ver os dados.** As Lambdas **não aparecem em *APM & Services*** (a entidade de Lambda exige a integração AWS do
+New Relic, que precisa de `iam:CreateRole`). Os dados ficam em *Query your data* (aba NRQL — a busca ⌘K não executa NRQL):
+
+```sql
+-- Funil por etapa
+SELECT count(*) FROM PaymentSaga FACET step, status SINCE 1 hour ago
+
+-- Histórico de um pedido
+SELECT timestamp, step, status, mpStatusDetail FROM PaymentSaga WHERE orderId = '<order_id>' SINCE 3 days ago
+
+-- Webhooks recebidos (logs da Lambda callback)
+SELECT timestamp, message FROM Log WHERE message LIKE '%mp_webhook_received%' SINCE 2 hours ago
+```
+
+**Dashboard.** *Dashboards > Import dashboard* → cole [`docs/newrelic-dashboard.json`](docs/newrelic-dashboard.json)
+(páginas *Pagamentos* e *Lambdas*; troque `8497993` em `accountIds` se for outra conta).
+
+**Atraso de envio.** A extensão envia a telemetria de uma invocação **na invocação seguinte** da mesma instância (ou
+quando a AWS desliga a instância ociosa). Com pouco tráfego, os últimos eventos demoram minutos para aparecer.
+Para forçar o envio sem efeito colateral:
+
+```bash
+curl -s -X POST "$(terraform output -raw orders_url)"  -H 'Content-Type: application/json' -d '{}'   # 400 → flush da orders
+curl -s -X POST "$(terraform output -raw webhook_url)" -H 'Content-Type: application/json' -d '{}'   # 401 → flush da callback
+```
 
 ### Verificar estado de uma saga no DynamoDB
 
@@ -442,6 +497,10 @@ aws stepfunctions get-execution-history \
 | Logs com `data_id:null`, `signature_valid:false` (inclusive `merchant_order`) | Notificações no formato antigo (IPN), sem assinatura | Inofensivo — o MP reenvia por alguns dias; o pagamento chega pelo webhook assinado |
 | Saga em `FAILED` logo no Step ① | `amount_cents` ≠ soma dos itens ou CPF inválido | Corrija o payload (ver regras em "Enviar uma ordem de pagamento") |
 | Ordem em `WAITING_PAYMENT` indefinidamente | Ninguém pagou o link | Expira em 48h → `EXPIRED` (Step ⑤) |
+| Pagamento aprovado no MP, SAGA parada em `WAITING_PAYMENT`, nenhum `mp_webhook_received` nos logs | URL do webhook no painel do MP aponta para um API Gateway antigo | Atualize a URL para o output `webhook_url` e reenvie pelo simulador do MP (ver "Testar um pagamento de ponta a ponta") |
+| `payment-service` não aparece em *APM & Services* do New Relic | Esperado — sem integração AWS não há entidade de Lambda | Consulte via NRQL (`FROM PaymentSaga`, `FROM Log`) ou pelo dashboard importado |
+| Eventos `PaymentSaga` faltando (ex.: 3 de 5) | A extensão envia na invocação seguinte da instância | Aguarde ou force o flush com uma requisição inválida (ver "New Relic") |
+| Nada chega ao New Relic após o deploy | `NEW_RELIC_*` ausentes no repo → plan mostra `TF_VAR_newrelic_license_key:` vazio | Cadastre os dois secrets e rode o deploy de novo; se persistir, procure `[NR_EXT]` nos logs da Lambda |
 
 ---
 
@@ -464,7 +523,11 @@ terraform destroy
 ```
 tech-challenge-payment-service/
 ├── docs/
-│   └── saga-architecture.md     # Documentação da arquitetura SAGA
+│   ├── saga-architecture.md     # Documentação da arquitetura SAGA
+│   ├── saga.png                 # Diagrama da arquitetura (gerado de saga-diagram.html)
+│   ├── saga-diagram.html        # Fonte do diagrama — comando para regenerar o PNG no topo do arquivo
+│   ├── monitoring.md            # New Relic: configuração, eventos PaymentSaga, NRQL
+│   └── newrelic-dashboard.json  # Dashboard pronto para importar no New Relic
 ├── bruno/                        # Collection Bruno para testes de API
 │   ├── bruno.json
 │   ├── docs/sqs-message-schema.md
@@ -478,7 +541,8 @@ tech-challenge-payment-service/
 │   ├── generate-link/index.js    # Step ② — chama Mercado Pago
 │   ├── notify-wait/index.js      # Step ③/④ — notifica app + WaitForTaskToken
 │   ├── cancel/index.js           # Step ⑤ — cancela gateway + marca EXPIRED
-│   └── callback/index.js         # Webhook MP → sendTaskSuccess/Failure + callback_url
+│   ├── callback/index.js         # Webhook MP → sendTaskSuccess/Failure + callback_url
+│   └── lib/monitoring.js         # recordSagaEvent → custom event PaymentSaga (no-op sem a layer)
 ├── infra/                        # Infraestrutura Terraform
 │   ├── bootstrap/                # Bootstrap: cria bucket S3 de state (roda uma vez)
 │   │   └── main.tf
@@ -488,9 +552,8 @@ tech-challenge-payment-service/
 │   ├── network.tf                # (reservado — sem recursos ativos)
 │   ├── sqs.tf                    # Fila payment-orders + DLQ
 │   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
-│   ├── sns.tf                    # Tópico payment-dlq-notifications
 │   ├── secrets.tf                # mp-access-token + mp-webhook-secret
-│   ├── iam.tf                    # Assume role policy + role Step Functions
+│   ├── iam.tf                    # Data source da LabRole (AWS Academy não permite criar roles)
 │   ├── lambda-build.tf           # null_resource (npm ci) + archive_file
 │   ├── lambda-trigger.tf
 │   ├── lambda-register.tf
@@ -501,6 +564,7 @@ tech-challenge-payment-service/
 │   ├── lambda-callback.tf
 │   ├── step-functions.tf         # State machine (ASL inline via jsonencode)
 │   ├── apigateway.tf             # HTTP API v2 + POST /orders + POST /webhook
+│   ├── monitoring.tf             # New Relic: layer, handler wrapper, secret da license key (opcional)
 │   ├── outputs.tf
 │   ├── terraform.tfvars.example  # Modelo para variáveis (sem valores reais)
 │   └── backend.hcl.example       # Modelo para configuração do backend S3

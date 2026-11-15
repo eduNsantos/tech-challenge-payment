@@ -53,7 +53,8 @@ Adiciona uma nova função Lambda ao payment-service.
 
 - [ ] Criar `src/{nome}/index.js` com `exports.handler = async (event) => {...}`
 - [ ] Se precisar de dependências além das já instaladas, adicionar em `src/package.json`
-- [ ] Criar `infra/lambda-{nome}.tf` com o template abaixo
+- [ ] Criar `infra/lambda-{nome}.tf` com o template abaixo (já inclui o padrão New Relic)
+- [ ] Registrar eventos de negócio com `recordSagaEvent(step, status, attrs)` de `../lib/monitoring` (sem dados pessoais) e documentar na tabela de `docs/monitoring.md`
 - [ ] Rodar `terraform-workflow` completo
 
 **Template `infra/lambda-{nome}.tf`:**
@@ -63,20 +64,28 @@ resource "aws_lambda_function" "{nome}" {
   function_name    = "payment-{nome}"
   role             = data.aws_iam_role.lab_role.arn   # LabRole — AWS Academy
   runtime          = "nodejs24.x"
-  handler          = "{nome}/index.handler"
+  handler          = local.newrelic_enabled ? local.newrelic_wrapper_handler : "{nome}/index.handler"
+  layers           = local.newrelic_layers
   filename         = data.archive_file.payment_lambdas.output_path
   source_code_hash = data.archive_file.payment_lambdas.output_base64sha256
   timeout          = 15
   memory_size      = 256
 
   environment {
-    variables = {
-      DYNAMODB_TABLE = aws_dynamodb_table.payment_saga.name
-      # adicionar outras vars conforme necessário
-    }
+    variables = merge(
+      {
+        DYNAMODB_TABLE = aws_dynamodb_table.payment_saga.name
+        # adicionar outras vars conforme necessário
+      },
+      local.newrelic_env,
+      local.newrelic_enabled ? { NEW_RELIC_LAMBDA_HANDLER = "{nome}/index.handler" } : {},
+    )
   }
 }
 ```
+
+> O handler original vai em `NEW_RELIC_LAMBDA_HANDLER`; com o monitoramento desligado (secrets `NEW_RELIC_*` ausentes)
+> os `locals` de `infra/monitoring.tf` voltam ao handler original e sem layer.
 
 > O arquivo ZIP é compartilhado — gerado em `infra/lambda-build.tf` via `archive_file.payment_lambdas`.
 > O novo handler é incluído automaticamente porque `source_dir = "${path.module}/../src"`.
@@ -135,7 +144,7 @@ aws lambda list-functions \
 
 ### Logs das Lambdas
 
-Nomes: `payment-trigger`, `payment-register`, `payment-generate-link`, `payment-notify-wait`, `payment-cancel`, `payment-callback`
+Nomes: `payment-orders-api`, `payment-trigger`, `payment-register`, `payment-generate-link`, `payment-notify-wait`, `payment-cancel`, `payment-callback`
 
 ```bash
 # Stream ao vivo
@@ -158,7 +167,7 @@ aws stepfunctions list-executions \
 
 # Detalhar execução específica
 aws stepfunctions describe-execution \
-  --execution-arn "arn:aws:states:us-east-1:477478162709:execution:payment-saga:{idempotency_key}"
+  --execution-arn "arn:aws:states:us-east-1:008962119864:execution:payment-saga:{idempotency_key}"
 ```
 
 ### DynamoDB — verificar estado de uma saga
@@ -179,11 +188,11 @@ aws sqs send-message \
     "idempotency_key": "aabbcc112233aabbcc112233aabbcc112233aabbcc112233aabbcc1122334455",
     "order_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     "created_at": "2026-01-01T00:00:00Z",
-    "amount_cents": 15000,
+    "amount_cents": 550,
     "currency": "BRL",
     "description": "Pedido de teste",
     "customer": {"name": "Teste", "email": "teste@email.com", "cpf": "52998224725"},
-    "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 15000}],
+    "items": [{"id": "P1", "title": "Item", "quantity": 1, "unit_price_cents": 550}],
     "callback_url": "https://app.example.com/payments/webhook/result"
   }'
 
@@ -228,7 +237,12 @@ SQS URL   : https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders
 DLQ URL   : https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders-dlq
 DynamoDB  : payment-saga-state
 SM Arn    : arn:aws:states:us-east-1:008962119864:stateMachine:payment-saga
-Webhook   : https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook
+Webhook   : terraform output -raw webhook_url   (o ID do API Gateway muda quando ele é recriado)
+```
+
+```bash
+WEBHOOK_URL=$(cd infra && terraform output -raw webhook_url)
+ORDERS_URL=$(cd infra && terraform output -raw orders_url)
 ```
 
 **Pré-requisito — credenciais AWS:**
@@ -245,9 +259,9 @@ export AWS_DEFAULT_REGION="us-east-1"
 
 O `idempotency_key` é SHA-256 de `order_id|amount_cents|created_at` (pipe literal):
 ```bash
-echo -n "f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z" | sha256sum
+echo -n "f47ac10b-58cc-4372-a567-0e02b2c3d479|550|2026-11-10T10:00:00Z" | sha256sum
 # ou em Node.js
-node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z').digest('hex'))"
+node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|550|2026-11-10T10:00:00Z').digest('hex'))"
 ```
 
 ### CPF de teste válido (algoritmo Receita Federal)
@@ -260,7 +274,7 @@ node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f
 
 ```bash
 # 1. Gerar chave de idempotência
-IKEY=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|15000|2026-11-10T10:00:00Z').digest('hex'))")
+IKEY=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('f47ac10b-58cc-4372-a567-0e02b2c3d479|550|2026-11-10T10:00:00Z').digest('hex'))")
 
 # 2. Enviar mensagem à fila
 aws sqs send-message \
@@ -269,11 +283,11 @@ aws sqs send-message \
     \"idempotency_key\": \"$IKEY\",
     \"order_id\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\",
     \"created_at\": \"2026-11-10T10:00:00Z\",
-    \"amount_cents\": 15000,
+    \"amount_cents\": 550,
     \"currency\": \"BRL\",
     \"description\": \"Teste SAGA — Lanche + Suco\",
     \"customer\": {\"name\": \"João da Silva\", \"email\": \"joao.silva@email.com\", \"cpf\": \"52998224725\", \"phone\": \"+5511999999999\"},
-    \"items\": [{\"id\": \"PROD-001\", \"title\": \"Lanche Artesanal\", \"quantity\": 2, \"unit_price_cents\": 5000}, {\"id\": \"PROD-042\", \"title\": \"Suco Natural 500ml\", \"quantity\": 1, \"unit_price_cents\": 5000}],
+    \"items\": [{\"id\": \"PROD-001\", \"title\": \"Lanche Artesanal\", \"quantity\": 1, \"unit_price_cents\": 300}, {\"id\": \"PROD-042\", \"title\": \"Suco Natural 500ml\", \"quantity\": 1, \"unit_price_cents\": 250}],
     \"metadata\": {\"source_service\": \"pos-application\"},
     \"callback_url\": \"https://webhook.site/SUBSTITUA-UUID-AQUI\"
   }"
@@ -308,11 +322,11 @@ aws stepfunctions list-executions \
 ### Cenário 3 — amount_cents inconsistente (Step ① aborta)
 
 ```bash
-# items somam 10000, amount_cents = 15000 → ValidationError
-IKEY3=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('ccccdddd-0000-1111-2222-333344445555|15000|2026-11-10T12:00:00Z').digest('hex'))")
+# items somam 500, amount_cents = 600 → ValidationError
+IKEY3=$(node -e "const c=require('crypto'); console.log(c.createHash('sha256').update('ccccdddd-0000-1111-2222-333344445555|600|2026-11-10T12:00:00Z').digest('hex'))")
 aws sqs send-message \
   --queue-url "https://sqs.us-east-1.amazonaws.com/008962119864/payment-orders" \
-  --message-body "{\"idempotency_key\":\"$IKEY3\",\"order_id\":\"ccccdddd-0000-1111-2222-333344445555\",\"created_at\":\"2026-11-10T12:00:00Z\",\"amount_cents\":15000,\"currency\":\"BRL\",\"description\":\"Teste valor errado\",\"customer\":{\"name\":\"Teste\",\"email\":\"t@t.com\",\"cpf\":\"52998224725\"},\"items\":[{\"id\":\"X\",\"title\":\"Item\",\"quantity\":1,\"unit_price_cents\":10000}]}"
+  --message-body "{\"idempotency_key\":\"$IKEY3\",\"order_id\":\"ccccdddd-0000-1111-2222-333344445555\",\"created_at\":\"2026-11-10T12:00:00Z\",\"amount_cents\":600,\"currency\":\"BRL\",\"description\":\"Teste valor errado\",\"customer\":{\"name\":\"Teste\",\"email\":\"t@t.com\",\"cpf\":\"52998224725\"},\"items\":[{\"id\":\"X\",\"title\":\"Item\",\"quantity\":1,\"unit_price_cents\":500}]}"
 ```
 
 ---
@@ -335,7 +349,7 @@ aws sqs send-message \
 
 ```bash
 curl -s -w "\n%{http_code}" -X POST \
-  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "x-signature: ts=1234567890,v1=assinaturainvalida" \
   -H "x-request-id: req-test-invalid" \
@@ -376,7 +390,7 @@ aws secretsmanager get-secret-value --secret-id payment/mp-webhook-secret \
 
 ```bash
 curl -s -X POST \
-  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "x-signature: ts=<ts>,v1=<hmac_valido>" \
   -H "x-request-id: req-test-ping" \
@@ -433,6 +447,12 @@ postman collection run postman/collections/payment-service-tests.json \
 
 Simula callbacks do Mercado Pago — atalho rápido para o cenário de webhook apenas.
 
+> **Limite:** a Lambda `callback` busca o pagamento em `GET /v1/payments/{id}`. Com ID fictício (`98765432`) a resposta
+> é **502** — serve para testar assinatura/roteamento, não gera `PAID`/`REJECTED`.
+> Para o fluxo real: pagar o link com cartão de teste (titular `APRO` aprova, `OTHE`/`FUND` recusa) ou usar o
+> **simulador de Webhooks do painel do MP** (conta do vendedor de teste) com o **ID real do pagamento** — ele assina com o
+> secret certo. O ID está em *Atividade* do vendedor; o UUID de `checkout/post-payments/...` não é o ID do pagamento.
+
 **Ver skill `test-full-flow` para cenários completos.**
 
 **Via script Node.js (recomendado — calcula HMAC automaticamente):**
@@ -452,7 +472,7 @@ MANIFEST="id:${ID};request-id:${REQ_ID};ts:${TS};"
 HMAC=$(echo -n "$MANIFEST" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
 
 curl -s -w "\n%{http_code}" -X POST \
-  "https://y3qp355i65.execute-api.us-east-1.amazonaws.com/webhook" \
+  "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "x-signature: ts=${TS},v1=${HMAC}" \
   -H "x-request-id: ${REQ_ID}" \
@@ -481,8 +501,11 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-TF_VAR_mp_webhook_secret     # Secret do webhook MP
-TF_VAR_app_notification_url  # URL do App para receber o link de pagamento
+MP_ACCESS_TOKEN              # → TF_VAR_mp_access_token
+MP_WEBHOOK_SECRET            # → TF_VAR_mp_webhook_secret
+TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url por mensagem
+NEW_RELIC_LICENSE_KEY        # opcional — com NEW_RELIC_ACCOUNT_ID liga o monitoramento
+NEW_RELIC_ACCOUNT_ID
 ```
 
 O bucket de state é derivado automaticamente no CI via `aws sts get-caller-identity`.
@@ -502,6 +525,13 @@ Após o primeiro deploy, configurar a URL do webhook no painel do Mercado Pago:
 - **Painel MP > Configurações > Notificações > URL de notificações**
 - Valor: `terraform output -raw webhook_url`
 - Eventos: `Pagamentos`
+- **Repetir sempre que o API Gateway for recriado** — o ID na URL muda e o MP continua mandando para a antiga.
+
+### Validar o deploy
+
+- `terraform plan` com monitoramento ligado: as 7 Lambdas com `layers` NewRelicNodeJS24X e handler `newrelic-lambda-wrapper.handler`.
+  Se o log mostrar `TF_VAR_newrelic_license_key:` vazio, os secrets `NEW_RELIC_*` não estão no repo.
+- Rodar a skill `newrelic-monitoring` para confirmar a chegada dos eventos.
 
 ---
 
@@ -524,3 +554,56 @@ terraform destroy -target=aws_lambda_function.{nome}
 terraform plan -destroy
 terraform destroy
 ```
+
+---
+
+## newrelic-monitoring
+
+Valida e investiga o monitoramento New Relic do payment-service. Detalhes em `docs/monitoring.md`.
+
+**Quando usar:** após deploy, após um teste de pagamento, ou quando o usuário diz que "não aparece no New Relic".
+
+**Fatos que evitam diagnóstico errado:**
+- As Lambdas **não aparecem em *APM & Services*** (sem integração AWS → sem entidade). Isso é esperado.
+- NRQL roda em *Query your data* (aba NRQL). A busca ⌘K **não** executa NRQL.
+- A extensão envia a telemetria **na invocação seguinte da mesma instância**. Faltar eventos logo após um teste é atraso.
+- Daqui não dá para consultar o New Relic (a license key só envia). Peça ao usuário para rodar a NRQL e mandar print,
+  ou uma User key `NRAK-...`.
+
+**1. Forçar o envio (sem efeito colateral):**
+```bash
+curl -s -X POST "$ORDERS_URL"  -H 'Content-Type: application/json' -d '{}'   # 400 → flush payment-orders-api
+curl -s -X POST "$WEBHOOK_URL" -H 'Content-Type: application/json' -d '{}'   # 401 → flush payment-callback
+```
+As Lambdas internas (trigger, register, generate-link, notify-wait, cancel) só enviam na próxima execução da SAGA
+ou quando a AWS desliga a instância ociosa.
+
+**2. Consultas de validação:**
+```sql
+-- Eventos por etapa (esperado por pedido: QUEUED → STARTED → PENDING → LINK_CREATED → WAITING_PAYMENT)
+SELECT count(*) FROM PaymentSaga WHERE orderId LIKE '<prefixo>%' FACET step, status SINCE 1 hour ago
+
+-- Resultado dos webhooks
+SELECT timestamp, orderId, status, mpStatus, mpStatusDetail, dataId FROM PaymentSaga WHERE step = 'callback' SINCE 2 hours ago
+
+-- O MP chamou o webhook? A assinatura bateu?
+SELECT timestamp, message FROM Log WHERE message LIKE '%mp_webhook_received%' SINCE 2 hours ago
+
+-- Telemetria do agente/extensão
+SELECT count(*) FROM Transaction, Span, Log WHERE appName = 'payment-service' FACET eventType() SINCE 1 hour ago
+```
+
+**3. Diagnóstico:**
+
+| Sintoma | Causa provável |
+|---|---|
+| Nenhum dado após o deploy | Secrets `NEW_RELIC_*` ausentes (monitoramento desligado) ou license key inválida → `[NR_EXT]` nos logs do CloudWatch |
+| Só parte dos eventos | Atraso da extensão → passo 1 |
+| Pagamento aprovado no MP, nenhum `mp_webhook_received` | URL do webhook no painel do MP desatualizada (API Gateway recriado) |
+| `WEBHOOK_INVALID_SIGNATURE` | `MP_WEBHOOK_SECRET` de outra aplicação do MP |
+| `mp_webhook_received` válido, sem `PAID` | Pagamento de pedido que não está em `WAITING_PAYMENT` (`task_token nao encontrado` nos logs) |
+
+**4. Dashboard:** *Dashboards > Import dashboard* com `docs/newrelic-dashboard.json` (conta `8497993`).
+Ao criar um evento novo, adicionar widget no JSON e a linha na tabela de eventos de `docs/monitoring.md`.
+
+**Pedidos de teste:** valor total entre R$ 5,00 e R$ 6,00 (`amount_cents` 500–600).

@@ -11,8 +11,8 @@ resource "aws_sfn_state_machine" "payment_saga" {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
-          FunctionName    = aws_lambda_function.register.arn
-          "Payload.$"     = "$"
+          FunctionName = aws_lambda_function.register.arn
+          "Payload.$"  = "$"
         }
         ResultPath = null
         Retry = [
@@ -30,7 +30,15 @@ resource "aws_sfn_state_machine" "payment_saga" {
             ResultPath  = "$.error"
           }
         ]
-        Next = "GerarLink"
+        Next = "IniciarTentativas"
+      }
+
+      # Contador de novas tentativas do link (persistido em $.link_retry.count)
+      IniciarTentativas = {
+        Type       = "Pass"
+        Result     = { count = 0 }
+        ResultPath = "$.link_retry"
+        Next       = "GerarLink"
       }
 
       GerarLink = {
@@ -53,11 +61,39 @@ resource "aws_sfn_state_machine" "payment_saga" {
         Catch = [
           {
             ErrorEquals = ["States.ALL"]
-            Next        = "EnviarParaDLQ"
+            Next        = "PodeTentarDeNovo"
             ResultPath  = "$.error"
           }
         ]
         Next = "NotificarEAguardar"
+      }
+
+      # Mercado Pago falhou nas 3 tentativas rápidas: espera e tenta de novo, até o limite
+      PodeTentarDeNovo = {
+        Type = "Choice"
+        Choices = [
+          {
+            Variable        = "$.link_retry.count"
+            NumericLessThan = var.link_retry_max_attempts
+            Next            = "AguardarNovaTentativa"
+          }
+        ]
+        Default = "EnviarParaDLQ"
+      }
+
+      AguardarNovaTentativa = {
+        Type    = "Wait"
+        Seconds = var.link_retry_wait_seconds
+        Next    = "ContarTentativa"
+      }
+
+      ContarTentativa = {
+        Type = "Pass"
+        Parameters = {
+          "count.$" = "States.MathAdd($.link_retry.count, 1)"
+        }
+        ResultPath = "$.link_retry"
+        Next       = "GerarLink"
       }
 
       NotificarEAguardar = {
@@ -103,7 +139,7 @@ resource "aws_sfn_state_machine" "payment_saga" {
         Type     = "Task"
         Resource = "arn:aws:states:::sqs:sendMessage"
         Parameters = {
-          QueueUrl     = aws_sqs_queue.dlq.url
+          QueueUrl        = aws_sqs_queue.dlq.url
           "MessageBody.$" = "States.JsonToString($)"
         }
         ResultPath = null
