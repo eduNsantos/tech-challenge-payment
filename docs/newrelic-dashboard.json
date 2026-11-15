@@ -1,0 +1,409 @@
+{
+  "name": "Payment Service — SAGA",
+  "description": "Pagamentos (Step Functions + Mercado Pago): funil, aprovação e saúde das Lambdas",
+  "permissions": "PUBLIC_READ_WRITE",
+  "pages": [
+    {
+      "name": "Pagamentos",
+      "description": null,
+      "widgets": [
+        {
+          "title": "Pedidos recebidos",
+          "layout": {
+            "column": 1,
+            "row": 1,
+            "width": 3,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.billboard"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT uniqueCount(orderId) AS 'Pedidos' FROM PaymentSaga WHERE status = 'QUEUED' SINCE 1 day ago COMPARE WITH 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Pagamentos aprovados",
+          "layout": {
+            "column": 4,
+            "row": 1,
+            "width": 3,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.billboard"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT uniqueCount(orderId) AS 'Pagos' FROM PaymentSaga WHERE status = 'PAID' SINCE 1 day ago COMPARE WITH 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Taxa de aprovação",
+          "layout": {
+            "column": 7,
+            "row": 1,
+            "width": 3,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.billboard"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT percentage(uniqueCount(orderId), WHERE status = 'PAID') AS 'Aprovação' FROM PaymentSaga WHERE status IN ('PAID','REJECTED','EXPIRED') SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Valor pago (R$)",
+          "layout": {
+            "column": 10,
+            "row": 1,
+            "width": 3,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.billboard"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT sum(amountCents) / 100 AS 'R$' FROM PaymentSaga WHERE status = 'PAID' SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Funil da SAGA",
+          "layout": {
+            "column": 1,
+            "row": 4,
+            "width": 6,
+            "height": 4
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.funnel"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT funnel(orderId, WHERE status = 'QUEUED' AS '1. Recebido', WHERE status = 'PENDING' AS '2. Registrado', WHERE status = 'LINK_CREATED' AS '3. Link gerado', WHERE status = 'WAITING_PAYMENT' AS '4. Aguardando', WHERE status = 'PAID' AS '5. Pago') FROM PaymentSaga SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Eventos por status",
+          "layout": {
+            "column": 7,
+            "row": 4,
+            "width": 6,
+            "height": 4
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT count(*) FROM PaymentSaga FACET status TIMESERIES AUTO SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Tempo até o resultado (s)",
+          "layout": {
+            "column": 1,
+            "row": 8,
+            "width": 4,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.bar"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT percentile(durationSeconds, 50, 95) FROM PaymentSaga WHERE status IN ('PAID','REJECTED','EXPIRED') FACET status SINCE 1 week ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Falhas e expirações",
+          "layout": {
+            "column": 5,
+            "row": 8,
+            "width": 4,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.bar"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT count(*) FROM PaymentSaga WHERE status IN ('LINK_ERROR','WEBHOOK_INVALID_SIGNATURE','REJECTED','EXPIRED') FACET status SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Meio de pagamento",
+          "layout": {
+            "column": 9,
+            "row": 8,
+            "width": 4,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.pie"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT count(*) FROM PaymentSaga WHERE status = 'PAID' FACET paymentMethod SINCE 1 week ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Últimos eventos",
+          "layout": {
+            "column": 1,
+            "row": 11,
+            "width": 12,
+            "height": 4
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.table"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT timestamp, orderId, step, status, amountCents / 100 AS 'R$', mpStatusDetail FROM PaymentSaga SINCE 1 day ago LIMIT 100"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lambdas",
+      "description": null,
+      "widgets": [
+        {
+          "title": "Invocações por Lambda",
+          "layout": {
+            "column": 1,
+            "row": 1,
+            "width": 6,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT count(*) FROM Transaction WHERE appName = 'payment-service' FACET aws.lambda.arn TIMESERIES AUTO SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Taxa de erro por Lambda (%)",
+          "layout": {
+            "column": 7,
+            "row": 1,
+            "width": 6,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.bar"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT percentage(count(*), WHERE error IS true) FROM Transaction WHERE appName = 'payment-service' FACET aws.lambda.arn SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Duração p95 por Lambda (s)",
+          "layout": {
+            "column": 1,
+            "row": 4,
+            "width": 6,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.bar"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT percentile(duration, 95) FROM Transaction WHERE appName = 'payment-service' FACET aws.lambda.arn SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Cold starts",
+          "layout": {
+            "column": 7,
+            "row": 4,
+            "width": 6,
+            "height": 3
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.billboard"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT count(*) AS 'Cold starts' FROM Transaction WHERE appName = 'payment-service' AND aws.lambda.coldStart IS true SINCE 1 day ago"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        },
+        {
+          "title": "Erros recentes",
+          "layout": {
+            "column": 1,
+            "row": 7,
+            "width": 12,
+            "height": 4
+          },
+          "linkedEntityGuids": null,
+          "visualization": {
+            "id": "viz.table"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [
+                  8497993
+                ],
+                "query": "SELECT timestamp, aws.lambda.arn, error.class, error.message FROM TransactionError WHERE appName = 'payment-service' SINCE 1 day ago LIMIT 50"
+              }
+            ],
+            "platformOptions": {
+              "ignoreTimeRange": false
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

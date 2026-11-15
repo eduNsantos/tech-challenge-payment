@@ -50,7 +50,7 @@ Nenhum dado pessoal (nome, e-mail, CPF/CNPJ) é enviado.
 | `orders` | `QUEUED` | `amountCents`, `currency` |
 | `trigger` | `STARTED` / `DUPLICATE` | — |
 | `register` | `PENDING` | `amountCents`, `currency`, `documentType` |
-| `generate-link` | `LINK_CREATED` / `LINK_ERROR` | `sandbox` / `httpStatus` |
+| `generate-link` | `LINK_CREATED` / `LINK_ERROR` | `attempt` (1 = primeira passada; 2+ = nova tentativa diária), `sandbox` / `httpStatus` |
 | `notify-wait` | `WAITING_PAYMENT` | `hasPaymentLink`, `appNotified` |
 | `callback` | `PAID` / `REJECTED` / `WEBHOOK_INVALID_SIGNATURE` | `mpPaymentId`, `mpStatus`, `mpStatusDetail`, `paymentMethod`, `durationSeconds` |
 | `cancel` | `EXPIRED` | `durationSeconds` |
@@ -58,7 +58,21 @@ Nenhum dado pessoal (nome, e-mail, CPF/CNPJ) é enviado.
 Todos os eventos têm `orderId` e `idempotencyKey`, exceto `WEBHOOK_INVALID_SIGNATURE`, que só tem `dataId`.
 
 > `FAILED` é gravado pelo próprio Step Functions (sem Lambda). Para acompanhar, use os erros das
-> Lambdas `payment-register` e `payment-generate-link` no New Relic e o alarme da DLQ → SNS.
+> Lambdas `payment-register` e `payment-generate-link` no New Relic.
+
+## Dashboard
+
+`docs/newrelic-dashboard.json` tem o dashboard pronto (conta `8497993`), com duas páginas:
+
+- **Pagamentos**: pedidos, aprovados, taxa de aprovação, valor pago, funil da SAGA, eventos por status,
+  tempo até o resultado, falhas/expirações, meio de pagamento e últimos eventos.
+- **Lambdas**: invocações, taxa de erro, duração p95, cold starts e erros recentes.
+
+Para importar: New Relic → **Dashboards** → **Import dashboard** → cole o conteúdo do JSON → **Import dashboard**.
+Se mudar de conta, troque `8497993` em `accountIds` antes de importar.
+
+> A extensão envia a telemetria de uma invocação na invocação seguinte da mesma instância (ou quando a
+> instância é desligada). Com pouco tráfego, os números podem ficar alguns minutos atrasados.
 
 ## Consultas NRQL úteis
 
@@ -79,6 +93,9 @@ SELECT sum(amountCents) / 100 FROM PaymentSaga WHERE status = 'PAID' TIMESERIES 
 -- Falhas ao gerar link / webhooks com assinatura inválida
 SELECT count(*) FROM PaymentSaga WHERE status IN ('LINK_ERROR', 'WEBHOOK_INVALID_SIGNATURE')
 FACET status TIMESERIES SINCE 1 day ago
+
+-- Pedidos em nova tentativa diária (Mercado Pago falhando)
+SELECT latest(attempt), latest(status) FROM PaymentSaga WHERE step = 'generate-link' AND attempt > 1 FACET orderId SINCE 1 week ago
 
 -- Histórico de um pedido
 SELECT timestamp, step, status FROM PaymentSaga WHERE orderId = '<order_id>' SINCE 3 days ago
