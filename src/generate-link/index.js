@@ -1,4 +1,5 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+const { recordSagaEvent } = require('../lib/monitoring');
 
 const sm = new SecretsManagerClient({});
 let cachedToken;
@@ -26,7 +27,7 @@ function documentType(number) {
 }
 
 exports.handler = async (event) => {
-  const { order_id, amount_cents, description, customer, items } = event;
+  const { idempotency_key, order_id, amount_cents, description, customer, items } = event;
   const token = await getMpToken();
 
   const body = {
@@ -65,6 +66,7 @@ exports.handler = async (event) => {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
+    recordSagaEvent('generate-link', 'LINK_ERROR', { orderId: order_id, idempotencyKey: idempotency_key, httpStatus: response.status });
     const err = new Error(`Mercado Pago error ${response.status}: ${JSON.stringify(error)}`);
     err.name = 'MercadoPagoError';
     throw err;
@@ -72,6 +74,10 @@ exports.handler = async (event) => {
 
   const preference = await response.json();
   const isSandbox = token.startsWith('TEST-');
+
+  recordSagaEvent('generate-link', 'LINK_CREATED', {
+    orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, sandbox: isSandbox,
+  });
 
   return {
     preference_id: preference.id,

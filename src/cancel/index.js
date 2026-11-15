@@ -1,6 +1,7 @@
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const { recordSagaEvent, secondsSince } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 const sm = new SecretsManagerClient({});
@@ -55,6 +56,14 @@ exports.handler = async (event) => {
       ':u': updatedAt,
     }),
   }));
+
+  recordSagaEvent('cancel', 'EXPIRED', {
+    orderId: record?.order_id,
+    idempotencyKey: idempotency_key,
+    amountCents: record?.amount_cents,
+    currency: record?.currency,
+    durationSeconds: record ? secondsSince(record.created_at) : undefined,
+  });
 
   // Informa o sistema de origem que a cobrança expirou (best-effort, mesmo payload do callback de PAID/REJECTED)
   if (record?.callback_url) {
