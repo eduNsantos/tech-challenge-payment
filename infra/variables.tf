@@ -48,3 +48,37 @@ variable "checkout_back_url_failure" {
   default     = ""
   description = "back_urls.failure do Checkout Pro"
 }
+
+# ── New Relic (opcional) ────────────────────────────────────────────────────
+# Monitoramento só é ligado quando license key, account ID e layer ARN estão preenchidos.
+# Com qualquer um vazio, as Lambdas sobem sem layer e com o handler original.
+
+variable "newrelic_license_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "License key de ingestão do New Relic (tipo INGEST - LICENSE). Vazio = monitoramento desligado"
+}
+
+variable "newrelic_account_id" {
+  type        = string
+  default     = ""
+  description = "Account ID do New Relic (necessário para distributed tracing)"
+}
+
+variable "newrelic_layer_arn" {
+  type        = string
+  default     = ""
+  description = "ARN da layer New Relic para Node.js em us-east-1, ex.: arn:aws:lambda:us-east-1:451483290750:layer:NewRelicNodeJS24X:<versão>"
+
+  validation {
+    condition     = var.newrelic_layer_arn == "" || can(regex("^arn:aws:lambda:[a-z0-9-]+:451483290750:layer:NewRelicNodeJS[0-9]+X:[0-9]+$", var.newrelic_layer_arn))
+    error_message = "newrelic_layer_arn deve ser uma layer NewRelicNodeJS<versão>X publicada pela conta 451483290750, com número de versão."
+  }
+}
+
+variable "newrelic_app_name" {
+  type        = string
+  default     = "payment-service"
+  description = "Nome da aplicação no New Relic (NEW_RELIC_APP_NAME)"
+}

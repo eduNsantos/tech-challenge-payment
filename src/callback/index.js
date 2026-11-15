@@ -3,6 +3,7 @@ const { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } = require('@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { createHmac, timingSafeEqual } = require('crypto');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const { recordSagaEvent, secondsSince } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 const sfn = new SFNClient({});
@@ -86,6 +87,7 @@ exports.handler = async (event) => {
     signature_valid: signatureValid,
   }));
   if (!signatureValid) {
+    recordSagaEvent('callback', 'WEBHOOK_INVALID_SIGNATURE', { dataId: resolveDataId(query, rawBody) });
     return err(401, 'Assinatura invalida');
   }
 
@@ -164,6 +166,18 @@ exports.handler = async (event) => {
       cause: `status=${status}, detail=${payment.status_detail}`,
     }));
   }
+
+  recordSagaEvent('callback', newStatus, {
+    orderId: record.order_id,
+    idempotencyKey: idempotency_key,
+    amountCents: record.amount_cents,
+    currency: record.currency,
+    mpPaymentId: String(mpPaymentId),
+    mpStatus: status,
+    mpStatusDetail: payment.status_detail,
+    paymentMethod: payment.payment_type_id,
+    durationSeconds: secondsSince(record.created_at),
+  });
 
   if (record.callback_url) {
     const callbackPayload = {

@@ -2,7 +2,8 @@ resource "aws_lambda_function" "trigger" {
   function_name    = "payment-trigger"
   role             = data.aws_iam_role.lab_role.arn
   runtime          = "nodejs24.x"
-  handler          = "trigger/index.handler"
+  handler          = local.newrelic_enabled ? local.newrelic_wrapper_handler : "trigger/index.handler"
+  layers           = local.newrelic_layers
   filename         = data.archive_file.payment_lambdas.output_path
   source_code_hash = data.archive_file.payment_lambdas.output_base64sha256
   timeout          = 60
@@ -11,9 +12,13 @@ resource "aws_lambda_function" "trigger" {
   reserved_concurrent_executions = 5
 
   environment {
-    variables = {
-      STATE_MACHINE_ARN = aws_sfn_state_machine.payment_saga.arn
-    }
+    variables = merge(
+      {
+        STATE_MACHINE_ARN = aws_sfn_state_machine.payment_saga.arn
+      },
+      local.newrelic_env,
+      local.newrelic_enabled ? { NEW_RELIC_LAMBDA_HANDLER = "trigger/index.handler" } : {},
+    )
   }
 }
 
