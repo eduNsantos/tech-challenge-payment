@@ -60,6 +60,20 @@ Todos os eventos têm `orderId` e `idempotencyKey`, exceto `WEBHOOK_INVALID_SIGN
 > `FAILED` é gravado pelo próprio Step Functions (sem Lambda). Para acompanhar, use os erros das
 > Lambdas `payment-register` e `payment-generate-link` no New Relic e o alarme da DLQ → SNS.
 
+## Dashboard
+
+`docs/newrelic-dashboard.json` tem o dashboard pronto (conta `8497993`), com duas páginas:
+
+- **Pagamentos**: pedidos, aprovados, taxa de aprovação, valor pago, funil da SAGA, eventos por status,
+  tempo até o resultado, falhas/expirações, meio de pagamento e últimos eventos.
+- **Lambdas**: invocações, taxa de erro, duração p95, cold starts e erros recentes.
+
+Para importar: New Relic → **Dashboards** → **Import dashboard** → cole o conteúdo do JSON → **Import dashboard**.
+Se mudar de conta, troque `8497993` em `accountIds` antes de importar.
+
+> A extensão envia a telemetria de uma invocação na invocação seguinte da mesma instância (ou quando a
+> instância é desligada). Com pouco tráfego, os números podem ficar alguns minutos atrasados.
+
 ## Consultas NRQL úteis
 
 ```sql

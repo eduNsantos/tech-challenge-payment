@@ -89,7 +89,7 @@ infra/
   outputs.tf
 
 bruno/                    # Collection para testes do webhook
-docs/                     # Documentação da arquitetura SAGA
+docs/                     # Arquitetura SAGA, monitoring.md, newrelic-dashboard.json
 ```
 
 ## Constraints críticos
@@ -127,6 +127,22 @@ NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic
 ```
 Push para `main` roda só `npm test`. Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
+
+## Monitoramento — New Relic
+
+- Layer pública `NewRelicNodeJS24X:<versão>` (conta AWS `451483290750`), versão fixada no default de `newrelic_layer_arn` (`infra/variables.tf`). Atualizar: `curl -s "https://us-east-1.layers.newrelic-external.com/get-layers?CompatibleRuntime=nodejs24.x"`.
+- `infra/monitoring.tf`: `local.newrelic_enabled` só é true com license key **e** account ID. Desligado → sem layer, handler original, secret não criado.
+- Toda Lambda nova precisa do padrão: `handler = local.newrelic_enabled ? local.newrelic_wrapper_handler : "<dir>/index.handler"`, `layers = local.newrelic_layers` e `environment.variables = merge({...}, local.newrelic_env, local.newrelic_enabled ? { NEW_RELIC_LAMBDA_HANDLER = "<dir>/index.handler" } : {})`.
+- Conta New Relic: `8497993`. A license key é a mesma dos repos `tech-challenge-application`/`tech-challenge-kubernetes`.
+- **Sem integração AWS do New Relic** (exige `iam:CreateRole`): as Lambdas não viram entidade em *APM & Services*. Validar sempre por NRQL (`FROM PaymentSaga`, `FROM Log`).
+- **A extensão envia a telemetria na invocação seguinte da mesma instância.** Eventos "faltando" logo após um teste costumam ser atraso, não bug. Para forçar o envio: `POST /orders` com `{}` (400) e `POST /webhook` sem assinatura (401). Nenhum dos dois altera estado.
+- Não há como consultar o New Relic daqui: a license key só envia dados. Para ler é preciso uma User key (`NRAK-...`), ou o usuário roda a NRQL e manda print.
+
+## Testes de pagamento (Mercado Pago)
+
+- O `callback` busca o pagamento real em `GET /v1/payments/{id}`: webhook com `data.id` fictício (exemplos do Bruno) responde **502**, não `PAID`.
+- Para simular `PAID`/`REJECTED` de verdade: pagar o link com os cartões de teste (titular `APRO` = aprovado; `OTHE`/`FUND` = recusado) ou usar o **simulador de Webhooks do painel do MP** com o ID real do pagamento.
+- **O ID do API Gateway muda quando ele é recriado.** Se o MP aprova e nada chega (nenhum `mp_webhook_received` nos logs), a URL do webhook no painel do MP está desatualizada.
 
 ## Campos `notification_url` e `callback_url` na mensagem SQS
 
