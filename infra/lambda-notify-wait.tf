@@ -1,6 +1,6 @@
 resource "aws_lambda_function" "notify_wait" {
   function_name    = "payment-notify-wait"
-  role             = data.aws_iam_role.lab_role.arn
+  role             = aws_iam_role.payment_lambda.arn
   runtime          = "nodejs24.x"
   handler          = "notify-wait/index.handler"
   filename         = data.archive_file.payment_lambdas.output_path

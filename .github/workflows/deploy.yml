@@ -98,40 +98,13 @@ jobs:
         with:
           terraform_version: "1.13.5"
 
-      - name: Ensure Terraform state bucket exists
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BACKEND_BUCKET="techchallenge-tfstate-${ACCOUNT_ID}"
-          echo "BACKEND_BUCKET=${BACKEND_BUCKET}" >> "$GITHUB_ENV"
-
-          if aws s3api head-bucket --bucket "$BACKEND_BUCKET" 2>/dev/null; then
-            echo "Bucket ${BACKEND_BUCKET} already exists."
-          else
-            echo "Creating bucket ${BACKEND_BUCKET}..."
-            aws s3api create-bucket --bucket "$BACKEND_BUCKET" --region us-east-1
-            aws s3api put-bucket-versioning \
-              --bucket "$BACKEND_BUCKET" \
-              --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption \
-              --bucket "$BACKEND_BUCKET" \
-              --server-side-encryption-configuration \
-              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-            aws s3api put-public-access-block \
-              --bucket "$BACKEND_BUCKET" \
-              --public-access-block-configuration \
-              "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-            echo "Bucket ${BACKEND_BUCKET} created."
-          fi
-
       - name: Terraform init
         working-directory: infra
         run: |
-          echo "Backend bucket: ${BACKEND_BUCKET}"
-
           for attempt in 1 2 3; do
             echo "Running terraform init (attempt ${attempt}/3)"
             set +e
-            terraform init -backend-config="bucket=${BACKEND_BUCKET}" 2>&1 | tee /tmp/terraform-init.log
+            terraform init -input=false -reconfigure 2>&1 | tee /tmp/terraform-init.log
             status=${PIPESTATUS[0]}
             set -e
 
