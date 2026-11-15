@@ -14,19 +14,6 @@ headers {
   Content-Type: application/json
 }
 
-script:pre-request {
-  const { createHmac } = require('crypto');
-  const ts = String(Math.floor(Date.now() / 1000));
-  const requestId = `req-${Date.now()}`;
-  const body = JSON.parse(req.body);
-  const paymentId = String(body.data?.id ?? '');
-  const secret = bru.getEnvVar('mpWebhookSecret');
-  const manifest = `id:${paymentId};request-id:${requestId};ts:${ts};`;
-  const v1 = createHmac('sha256', secret).update(manifest).digest('hex');
-  req.setHeader('x-signature', `ts=${ts},v1=${v1}`);
-  req.setHeader('x-request-id', requestId);
-}
-
 body:json {
   {
     "id": "98765432",
@@ -42,24 +29,41 @@ body:json {
   }
 }
 
+vars:pre-request {
+  baseUrl: https://1x60ntxkch.execute-api.us-east-1.amazonaws.com/
+}
+
+script:pre-request {
+  const { createHmac } = require('crypto');
+  const ts = String(Math.floor(Date.now() / 1000));
+  const requestId = `req-${Date.now()}`;
+  const body = JSON.parse(req.body);
+  const paymentId = String(body.data?.id ?? '');
+  const secret = bru.getEnvVar('mpWebhookSecret');
+  const manifest = `id:${paymentId};request-id:${requestId};ts:${ts};`;
+  const v1 = createHmac('sha256', secret).update(manifest).digest('hex');
+  req.setHeader('x-signature', `ts=${ts},v1=${v1}`);
+  req.setHeader('x-request-id', requestId);
+}
+
 docs {
   ## Webhook — Pagamento aprovado
-
+  
   Simula o callback que o Mercado Pago envia quando o pagamento é aprovado
   (`status: "approved"`, `status_detail: "accredited"`).
-
+  
   ### Fluxo esperado
   1. Lambda Callback valida o `x-signature` com o secret do Secrets Manager
   2. Busca os detalhes do pagamento na API do Mercado Pago usando `data.id`
   3. Atualiza o DynamoDB com `status = PAID`
   4. Chama `sendTaskSuccess` no Step Functions para resolver o WaitForTaskToken (Step ④)
-
+  
   ### Header x-signature
   O Mercado Pago assina os webhooks com HMAC-SHA256.
   Formato: `ts=<timestamp_unix>,v1=<hmac_hex>`
   A string assinada é: `id:<data.id>;request-id:<x-request-id>;ts:<timestamp>;`
   (o MP real envia `data.id` também na query string; aqui a Lambda usa o do body como fallback)
-
+  
   Em produção, o valor real vem do painel do Mercado Pago em:
   Configurações → Notificações → Chave secreta
 }

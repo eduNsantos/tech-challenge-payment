@@ -1,4 +1,4 @@
-# Roles próprias do payment-ms (a conta atual não tem a LabRole do AWS Academy).
+# Roles próprias do payment-ms.
 # Mesmo padrão do tech-challenge-lambda-functions: role + policies com escopo mínimo.
 
 # ─── Lambdas ─────────────────────────────────────────────────────────────────

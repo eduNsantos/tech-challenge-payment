@@ -4,7 +4,7 @@
 
 As 7 Lambdas usam a **New Relic Lambda layer** (agente Node.js + Lambda Extension).
 A extensão envia traces, métricas de invocação, erros e logs **direto para o New Relic** com a license key —
-não precisa de IAM role nem da integração AWS do New Relic (que exige `iam:CreateRole`, bloqueado pelo SCP do Academy).
+não precisa da integração AWS do New Relic (que não está configurada).
 
 ```
 Lambda (handler = newrelic-lambda-wrapper.handler)
@@ -106,6 +106,6 @@ taxa de erro de qualquer Lambda `payment-*` acima de 5%.
 
 ## Fora do escopo (por enquanto)
 
-- Métricas CloudWatch de SQS / DynamoDB / Step Functions / API Gateway: a integração por polling exige IAM role;
-  Metric Streams via Firehose depende de a `LabRole` confiar em `streams.metrics.cloudwatch.amazonaws.com`. Ainda não foi testado.
+- Métricas CloudWatch de SQS / DynamoDB / Step Functions / API Gateway: exigem a integração AWS do New Relic
+  (role de polling ou Metric Streams via Firehose). Ainda não foi configurada.
 - Trace distribuído ponta a ponta (app → SQS → Step Functions): exige propagar `traceparent` na mensagem.

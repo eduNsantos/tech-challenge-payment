@@ -104,7 +104,7 @@ docs/                     # Arquitetura SAGA, monitoring.md, newrelic-dashboard.
 ## Constraints críticos
 
 ### IAM
-A conta `477478162709` não tem a `LabRole` do AWS Academy. O `infra/iam.tf` cria roles próprias com escopo mínimo:
+O `infra/iam.tf` cria roles próprias com escopo mínimo:
 - `payment-ms-lambda` — usada por todas as Lambdas (DynamoDB, Secrets Manager, SQS, Step Functions)
 - `payment-ms-step-functions` — usada pela state machine (invoca as Lambdas e envia para a DLQ)
 
@@ -127,7 +127,7 @@ TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_u
 NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
 NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
-Push para `main` roda só `npm test` + `npm run test:bdd` (Node 24). Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
+PR para `main` roda só `npm test` + `npm run test:bdd` (Node 24). Push na `main` (e `workflow_dispatch` na `main`) roda Test → Deploy (`terraform plan/apply`).
 Nova tentativa do link: `link_retry_wait_seconds` (padrão 86400) e `link_retry_max_attempts` (padrão 3) em `infra/variables.tf`. Para testar, use espera curta (≥ 60s). Só falhas do passo ② voltam ao ciclo; `EXPIRED` não. Não há SNS: a DLQ só retém as mensagens (14 dias).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
