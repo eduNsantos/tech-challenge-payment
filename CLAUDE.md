@@ -90,6 +90,7 @@ infra/
 
 bruno/                    # Collection para testes do webhook
 docs/                     # Arquitetura SAGA, monitoring.md, newrelic-dashboard.json
+                          # saga.png é gerado de saga-diagram.html (fonte também do artifact "SAGA Payment") — ao mudar o fluxo, edite BOXES/WIRES e regenere
 ```
 
 ## Constraints críticos

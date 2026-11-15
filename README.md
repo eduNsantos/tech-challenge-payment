@@ -521,6 +521,8 @@ terraform destroy
 tech-challenge-payment-service/
 ├── docs/
 │   ├── saga-architecture.md     # Documentação da arquitetura SAGA
+│   ├── saga.png                 # Diagrama da arquitetura (gerado de saga-diagram.html)
+│   ├── saga-diagram.html        # Fonte do diagrama — comando para regenerar o PNG no topo do arquivo
 │   ├── monitoring.md            # New Relic: configuração, eventos PaymentSaga, NRQL
 │   └── newrelic-dashboard.json  # Dashboard pronto para importar no New Relic
 ├── bruno/                        # Collection Bruno para testes de API

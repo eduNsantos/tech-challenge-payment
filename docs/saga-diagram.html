@@ -1,0 +1,248 @@
+<!doctype html>
+<!--
+  Fonte do docs/saga.png e do artifact "SAGA Payment" (https://claude.ai/artifact/SmYUdb4aadwFaqAdR8BD7Z).
+  Regenerar o PNG (tema escuro, 2x):
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+      --force-device-scale-factor=2 --window-size=1280,1000 --virtual-time-budget=3000 \
+      --screenshot=docs/saga.png "file://$PWD/docs/saga-diagram.html#dark"
+  Boxes e setas ficam nos arrays BOXES e WIRES (coordenadas do viewBox 0 0 1232 880).
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAGA Payment</title>
+<style>
+:root {
+  --bg: #f5f5f4; --bg2: #ffffff; --fg: #111827; --fg2: #6b7280; --bdr: #e5e7eb;
+  --c-sf: #6366f1; --c-sf-bg: rgba(99,102,241,0.06); --c-step-bg: rgba(99,102,241,0.055);
+  --c-db: #d97706; --c-db-bg: rgba(217,119,6,0.08);
+  --c-dlq: #dc2626; --c-dlq-bg: rgba(220,38,38,0.07);
+  --c-ok: #16a34a; --c-ok-bg: rgba(22,163,74,0.07);
+  --c-rej: #ca8a04; --c-rej-bg: rgba(202,138,4,0.08);
+  --c-ext: #0891b2; --c-ext-bg: rgba(8,145,178,0.07);
+  --c-nr: #9333ea; --c-nr-bg: rgba(147,51,234,0.07);
+  --c-neut-bg: rgba(107,114,128,0.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c0c0c; --bg2: #161616; --fg: #f3f4f6; --fg2: #9ca3af; --bdr: #2d2d2d;
+    --c-sf: #818cf8; --c-sf-bg: rgba(129,140,248,0.09); --c-step-bg: rgba(129,140,248,0.08);
+    --c-db: #f59e0b; --c-db-bg: rgba(245,158,11,0.09);
+    --c-dlq: #f87171; --c-dlq-bg: rgba(248,113,113,0.09);
+    --c-ok: #4ade80; --c-ok-bg: rgba(74,222,128,0.09);
+    --c-rej: #fbbf24; --c-rej-bg: rgba(251,191,36,0.09);
+    --c-ext: #22d3ee; --c-ext-bg: rgba(34,211,238,0.09);
+    --c-nr: #c084fc; --c-nr-bg: rgba(192,132,252,0.09);
+    --c-neut-bg: rgba(156,163,175,0.09);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0c0c; --bg2: #161616; --fg: #f3f4f6; --fg2: #9ca3af; --bdr: #2d2d2d;
+  --c-sf: #818cf8; --c-sf-bg: rgba(129,140,248,0.09); --c-step-bg: rgba(129,140,248,0.08);
+  --c-db: #f59e0b; --c-db-bg: rgba(245,158,11,0.09);
+  --c-dlq: #f87171; --c-dlq-bg: rgba(248,113,113,0.09);
+  --c-ok: #4ade80; --c-ok-bg: rgba(74,222,128,0.09);
+  --c-rej: #fbbf24; --c-rej-bg: rgba(251,191,36,0.09);
+  --c-ext: #22d3ee; --c-ext-bg: rgba(34,211,238,0.09);
+  --c-nr: #c084fc; --c-nr-bg: rgba(192,132,252,0.09);
+  --c-neut-bg: rgba(156,163,175,0.09);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  margin: 0; padding: 32px 16px;
+}
+.wrap { max-width: 1248px; margin: 0 auto; }
+.eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--fg2); margin: 0 0 6px; }
+h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+.sub { font-size: 14px; color: var(--fg2); margin: 0 0 20px; }
+.card { background: var(--bg2); border: 1px solid var(--bdr); border-radius: 12px; padding: 20px 16px; overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 900px; height: auto; color: var(--fg); }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
+figcaption { margin-top: 16px; font-size: 13px; line-height: 1.65; color: var(--fg2); max-width: 1000px; }
+figcaption code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; background: var(--bdr); padding: 1px 4px; border-radius: 3px; color: var(--fg); }
+.legend { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 20px; border-top: 1px solid var(--bdr); padding-top: 14px; }
+.li { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fg2); }
+.dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; opacity: .8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">tech-challenge · payment-service</p>
+  <h1>Arquitetura SAGA</h1>
+  <p class="sub">Orquestração via Step Functions · API Gateway · SQS · DynamoDB · Mercado Pago · New Relic</p>
+
+  <div class="card">
+    <figure style="margin:0">
+      <svg id="saga" viewBox="0 0 1232 880" role="img"
+           aria-label="Diagrama SAGA do payment-service: POST /orders, SQS, Step Functions com 5 passos, DynamoDB, Mercado Pago, DLQ, retorno via webhook e New Relic"></svg>
+      <figcaption>
+        O app envia o pedido em <code>POST /orders</code>; a λ <code>payment-orders-api</code> valida o payload, gera o
+        <code>idempotency_key</code> (SHA-256) e enfileira no SQS. A λ <code>payment-trigger</code> inicia a execução com
+        <code>name = idempotency_key</code>, o que rejeita duplicatas. O Step Functions registra o pedido (passo 1), cria a preferência
+        no Mercado Pago (passo 2) e envia o link para a <code>notification_url</code> (passo 3), parando no <code>waitForTaskToken</code> (passo 4).
+        O pagamento volta por um caminho independente: Mercado Pago → <code>POST /webhook</code> → λ <code>payment-callback</code>,
+        que valida o HMAC, consulta o pagamento e resolve o passo 4 com <code>sendTaskSuccess</code> (PAID) ou
+        <code>sendTaskFailure</code> (REJECTED), avisando a <code>callback_url</code>. Sem pagamento em 48h, o passo 5 marca EXPIRED,
+        avisa a <code>callback_url</code> e envia o estado para a DLQ. Todas as λ usam a layer do New Relic
+        (eventos <code>PaymentSaga</code>, traces e logs).
+      </figcaption>
+    </figure>
+    <div class="legend">
+      <div class="li"><div class="dot" style="background:var(--c-sf)"></div>Step Functions</div>
+      <div class="li"><div class="dot" style="background:var(--c-ok)"></div>Retorno / sucesso</div>
+      <div class="li"><div class="dot" style="background:var(--c-rej)"></div>Pagamento recusado</div>
+      <div class="li"><div class="dot" style="background:var(--c-dlq)"></div>Falha / compensação / DLQ</div>
+      <div class="li"><div class="dot" style="background:var(--c-db)"></div>Estado (DynamoDB)</div>
+      <div class="li"><div class="dot" style="background:var(--c-ext)"></div>Mercado Pago</div>
+      <div class="li"><div class="dot" style="background:var(--c-nr)"></div>Observabilidade (New Relic)</div>
+    </div>
+  </div>
+</div>
+
+<script>
+if (location.hash === '#dark' || location.hash === '#light') document.documentElement.dataset.theme = location.hash.slice(1);
+
+const KIND = {
+  neut: { stroke: 'var(--fg)',    fill: 'var(--c-neut-bg)', title: 'var(--fg)' },
+  step: { stroke: 'var(--c-sf)',  fill: 'var(--c-step-bg)', title: 'var(--fg)' },
+  ok:   { stroke: 'var(--c-ok)',  fill: 'var(--c-ok-bg)',   title: 'var(--c-ok)' },
+  rej:  { stroke: 'var(--c-rej)', fill: 'var(--c-rej-bg)',  title: 'var(--c-rej)' },
+  bad:  { stroke: 'var(--c-dlq)', fill: 'var(--c-dlq-bg)',  title: 'var(--c-dlq)' },
+  data: { stroke: 'var(--c-db)',  fill: 'var(--c-db-bg)',   title: 'var(--c-db)' },
+  ext:  { stroke: 'var(--c-ext)', fill: 'var(--c-ext-bg)',  title: 'var(--c-ext)' },
+  nr:   { stroke: 'var(--c-nr)',  fill: 'var(--c-nr-bg)',   title: 'var(--c-nr)' },
+};
+const COLOR = { main: 'var(--fg)', green: 'var(--c-ok)', amber: 'var(--c-rej)', red: 'var(--c-dlq)',
+                orange: 'var(--c-db)', cyan: 'var(--c-ext)', purple: 'var(--c-nr)' };
+
+// [x, y, w, h, kind, título, linhas[], opções]
+const BOXES = [
+  // Entrada
+  [20, 20, 150, 64, 'neut', 'App / EKS', ['produz pedidos']],
+  [215, 20, 170, 64, 'neut', 'API Gateway', ['POST /orders'], { mono: true }],
+  [430, 20, 205, 64, 'neut', 'λ payment-orders-api', ['valida payload', 'gera idempotency_key']],
+  [680, 20, 185, 64, 'neut', 'SQS payment-orders', ['Standard · redrive 3x → DLQ']],
+  [910, 20, 230, 64, 'neut', 'λ payment-trigger', ['máx 5 concorrentes · StartExecution', 'name = idempotency_key']],
+  // Coluna esquerda
+  [20, 165, 150, 64, 'neut', 'SNS', ['tópico de alerta', 'sem assinatura'], { dash: true }],
+  [20, 265, 150, 64, 'bad', 'DLQ', ['payment-orders-dlq', 'retenção 14 dias']],
+  // Passos
+  [225, 175, 670, 64, 'step', 'REGISTRAR', ['valida CPF/CNPJ e soma dos itens = amount_cents · DynamoDB → PENDING'], { tag: 'λ payment-register', n: 1 }],
+  [225, 265, 670, 64, 'step', 'GERAR LINK', ['cria preferência Checkout Pro no Mercado Pago · retry 3x com backoff (máx 10s)'], { tag: 'λ payment-generate-link', n: 2 }],
+  [225, 355, 670, 64, 'step', 'NOTIFICAR APP', ['salva task_token · DynamoDB → WAITING_PAYMENT · POST notification_url com o link'], { tag: 'λ payment-notify-wait', n: 3 }],
+  [225, 445, 670, 64, 'step', 'AGUARDAR PAGAMENTO', ['heartbeat 30 min · timeout 48h · resolvido pela λ payment-callback'], { tag: 'waitForTaskToken', n: 4 }],
+  // Saídas
+  [225, 565, 156, 72, 'bad', 'SagaFalhou', ['Fail · SagaFailed']],
+  [396, 565, 156, 72, 'ok', 'PAID', ['Succeed', 'PagamentoAprovado']],
+  [567, 565, 156, 72, 'rej', 'REJECTED', ['Fail', 'PagamentoRejeitado']],
+  [738, 565, 157, 72, 'bad', 'CANCELAR', ['λ payment-cancel', 'DynamoDB → EXPIRED', 'POST callback_url'], { n: 5 }],
+  // Coluna direita
+  [950, 165, 270, 100, 'data', 'DynamoDB', ['payment-saga-state · GSI order_id-index', 'PENDING → WAITING_PAYMENT →', 'PAID | REJECTED | EXPIRED']],
+  [950, 300, 270, 70, 'ext', 'Mercado Pago', ['Checkout Pro · API de pagamentos']],
+  [950, 410, 270, 120, 'nr', 'New Relic', ['layer NewRelicNodeJS24X nas 7 λ', 'eventos PaymentSaga · traces · logs', 'docs/newrelic-dashboard.json'], { dash: true }],
+  [950, 590, 270, 72, 'neut', 'App · callback_url', ['recebe o resultado final', 'PAID · REJECTED · EXPIRED']],
+  // Retorno do pagamento
+  [250, 750, 400, 90, 'neut', 'λ payment-callback', ['valida HMAC (x-signature) · GET /v1/payments/{id}', 'GSI order_id → task_token · sendTaskSuccess / Failure']],
+  [705, 760, 185, 70, 'neut', 'API Gateway', ['POST /webhook'], { mono: true }],
+  [950, 760, 270, 70, 'ext', 'Mercado Pago', ['webhook de pagamento (assinado)']],
+];
+
+// [pontos, cor, opções{dash, labels:[[x,y,texto,anchor]]}]
+const WIRES = [
+  [[[170, 52], [215, 52]], 'main', { labels: [[192, 45, 'pedido', 'middle']] }],
+  [[[385, 52], [430, 52]], 'main'],
+  [[[635, 52], [680, 52]], 'main', { labels: [[657, 45, 'enfileira', 'middle']] }],
+  [[[865, 52], [910, 52]], 'main', { labels: [[887, 45, 'poll', 'middle']] }],
+  [[[1025, 84], [1025, 114], [560, 114], [560, 175]], 'main', { labels: [[570, 126, 'StartExecution']] }],
+  [[[772, 84], [772, 98], [8, 98], [8, 297], [20, 297]], 'red', { dash: true, labels: [[700, 94, 'após 3 recebimentos', 'end']] }],
+  // Passos
+  [[[560, 239], [560, 265]], 'main'],
+  [[[560, 329], [560, 355]], 'green', { labels: [[570, 347, 'link gerado']] }],
+  [[[560, 419], [560, 445]], 'main'],
+  [[[474, 509], [474, 565]], 'green', { labels: [[480, 542, 'sendTaskSuccess']] }],
+  [[[645, 509], [645, 565]], 'amber', { labels: [[651, 542, 'sendTaskFailure']] }],
+  [[[816, 509], [816, 565]], 'red', { labels: [[822, 542, 'timeout 48h']] }],
+  // Falhas
+  [[[225, 207], [212, 207], [212, 550], [303, 550], [303, 565]], 'red', { labels: [[218, 535, 'falha']] }],
+  [[[225, 297], [170, 297]], 'red', { labels: [[197, 290, '3x', 'middle']] }],
+  [[[95, 265], [95, 229]], 'red', { dash: true, labels: [[102, 252, 'alerta (não ligado)']] }],
+  [[[816, 637], [816, 680], [120, 680], [120, 329]], 'red', { labels: [[460, 675, 'compensação → DLQ', 'middle']] }],
+  [[[60, 329], [60, 601], [225, 601]], 'red', { labels: [[66, 595, 'SagaFalhou']] }],
+  // Estado e externos
+  [[[895, 207], [950, 207]], 'orange', { dash: true, labels: [[922, 200, 'PUT', 'middle']] }],
+  [[[895, 387], [922, 387], [922, 245], [950, 245]], 'orange', { dash: true, labels: [[926, 380, 'UPDATE']] }],
+  [[[895, 297], [936, 297], [936, 335], [950, 335]], 'cyan'],
+  [[[920, 470], [950, 470]], 'purple', { dash: true }],
+  [[[895, 605], [922, 605], [922, 626], [950, 626]], 'red'],
+  // Retorno
+  [[[950, 795], [890, 795]], 'cyan', { labels: [[920, 788, 'POST', 'middle']] }],
+  [[[705, 795], [650, 795]], 'main'],
+  [[[250, 795], [190, 795], [190, 477], [225, 477]], 'green', { dash: true, labels: [[184, 750, 'sendTask', 'end'], [184, 763, 'Success/Failure', 'end'], [184, 776, '→ retoma o passo 4', 'end']] }],
+  [[[600, 750], [600, 702], [1085, 702], [1085, 662]], 'green', { labels: [[840, 697, 'POST callback_url · PAID / REJECTED', 'middle']] }],
+];
+
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('saga');
+function el(tag, attrs = {}, style = {}, parent = svg) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  Object.assign(e.style, style);
+  parent.appendChild(e);
+  return e;
+}
+function text(x, y, str, { size = 11, weight = 400, color = 'var(--fg2)', anchor = 'start', mono = false } = {}) {
+  const t = el('text', { x, y, 'text-anchor': anchor }, { fill: color, fontSize: size + 'px', fontWeight: weight });
+  if (mono) t.style.fontFamily = '"SF Mono", Menlo, monospace';
+  t.textContent = str;
+  return t;
+}
+
+function badge(cx, cy, n, color) {
+  el('circle', { cx, cy, r: 9.5 }, { fill: color });
+  text(cx, cy + 4, String(n), { size: 11, weight: 700, color: 'var(--bg2)', anchor: 'middle' });
+}
+
+const defs = el('defs');
+const markerIds = {};
+for (const [name, color] of Object.entries(COLOR)) {
+  const m = el('marker', { id: 'arw-' + name, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, {}, defs);
+  el('path', { d: 'M0,0 L10,5 L0,10 z' }, { fill: color }, m);
+  markerIds[name] = 'arw-' + name;
+}
+
+// Contêiner Step Functions
+el('rect', { x: 200, y: 130, width: 720, height: 535, rx: 12 }, { fill: 'var(--c-sf-bg)', stroke: 'var(--c-sf)', strokeWidth: 1.5, strokeDasharray: '6 3' });
+text(222, 152, 'AWS Step Functions — payment-saga (STANDARD)', { size: 12.5, weight: 700, color: 'var(--c-sf)' });
+text(735, 723, '— entrada independente: retorno do pagamento —', { size: 11.5, anchor: 'middle' });
+
+for (const [x, y, w, h, kind, title, lines, opt = {}] of BOXES) {
+  const k = KIND[kind];
+  el('rect', { x, y, width: w, height: h, rx: 7 }, { fill: k.fill, stroke: k.stroke, strokeWidth: 1.4, strokeDasharray: opt.dash ? '5 3' : 'none' });
+  if (kind === 'step') {
+    const tx = opt.n ? x + 44 : x + 18;
+    if (opt.n) badge(x + 26, y + 22, opt.n, 'var(--c-sf)');
+    const t = text(tx, y + 26, title, { size: 13.5, weight: 700, color: k.title });
+    if (opt.tag) text(tx + t.getComputedTextLength() + 10, y + 26, opt.tag, { size: 11.5, weight: 500 });
+    lines.forEach((l, i) => text(x + 18, y + 46 + i * 15, l, { size: 11.5 }));
+  } else {
+    const total = 17 + lines.length * 15;
+    const top = y + (h - total) / 2 + 13;
+    const tt = text(x + w / 2 + (opt.n ? 11 : 0), top, title, { size: 13.5, weight: 700, color: k.title, anchor: 'middle' });
+    if (opt.n) badge(x + w / 2 + 11 - tt.getComputedTextLength() / 2 - 13, top - 5, opt.n, k.stroke);
+    lines.forEach((l, i) => text(x + w / 2, top + 18 + i * 15, l, { size: opt.mono ? 11 : 11.5, anchor: 'middle', mono: opt.mono, color: opt.mono ? 'var(--fg)' : 'var(--fg2)' }));
+  }
+}
+
+for (const [points, color, opt = {}] of WIRES) {
+  el('polyline', { points: points.map(p => p.join(',')).join(' '), fill: 'none', 'marker-end': `url(#${markerIds[color]})` },
+     { stroke: COLOR[color], strokeWidth: 1.6, strokeDasharray: opt.dash ? '6 4' : 'none' });
+  (opt.labels || []).forEach(([x, y, str, anchor]) => text(x, y, str, { size: 10.5, color: COLOR[color], anchor }));
+}
+</script>
+</body>
+</html>
