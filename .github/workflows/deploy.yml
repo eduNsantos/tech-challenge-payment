@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-  # Check obrigatório (Test) da regra de proteção da main; o job Deploy só roda em workflow_dispatch
+  # PR: só o job Test (check obrigatório da regra de proteção da main).
+  # Push na main e Run workflow: Test → Deploy.
   pull_request:
     branches:
       - main
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  # PRs ficam num grupo próprio para não cancelar um deploy manual na fila
+  # PRs ficam num grupo próprio para não cancelar um deploy na fila
   group: ${{ github.event_name == 'pull_request' && format('payment-service-pr-{0}', github.ref) || 'payment-service-deploy' }}
   cancel-in-progress: false
 
@@ -47,8 +48,8 @@ jobs:
   deploy:
     name: Deploy
     needs: test
-    # Deploy só via execução manual (workflow_dispatch); push na main roda só os testes.
-    if: github.event_name == 'workflow_dispatch'
+    # Deploy automático a cada push na main (merge de PR); Run workflow permite redeploy manual.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     env:

@@ -1,6 +1,6 @@
 # New Relic — Lambda Extension + agente Node.js via layer.
-# Não cria IAM role (bloqueado pelo SCP do AWS Academy): a extensão envia a telemetria
-# direto para o New Relic usando a license key, lida do Secrets Manager com a LabRole.
+# Não depende da integração AWS do New Relic: a extensão envia a telemetria direto
+# para o New Relic usando a license key, lida do Secrets Manager pela role das Lambdas.
 
 locals {
   newrelic_enabled = (

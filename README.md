@@ -30,6 +30,36 @@ Mercado Pago → POST /webhook → API Gateway → λ Callback
                                              → POST callback_url (se presente)
 ```
 
+### Por que serverless e não Kubernetes
+
+O enunciado pede deploy automatizado em Kubernetes. Os outros dois serviços cumprem isso: as APIs do
+`tech-challenge-application` e do `tech-challenge-services-ms` rodam no EKS. Este serviço é a exceção, por decisão
+de projeto: ele roda em Lambda + Step Functions, provisionado por Terraform, e não tem manifestos k8s. Os motivos:
+
+| Motivo | Detalhe |
+|---|---|
+| **Quase todo o tempo da saga é espera** | Uma cobrança fica até 48h em `WAITING_PAYMENT` aguardando o Mercado Pago. No Step Functions, `WaitForTaskToken` guarda essa espera sem processo rodando e sem custo de computação. Em um pod, o estado de cada saga teria de ser persistido e retomado por polling ou timers próprios. |
+| **Orquestrador gerenciado** | Retry com backoff, timeout, heartbeat, `Catch` para compensação (passo ⑤) e histórico visual de cada execução já vêm do Step Functions. No Kubernetes seria preciso escrever e operar um orquestrador (ou instalar Temporal/Camunda) só para isso. |
+| **Idempotência nativa** | O `idempotency_key` é o `name` da execução: o Step Functions recusa uma segunda saga para o mesmo pedido (`ExecutionAlreadyExists`) sem lock nem tabela extra. |
+| **Webhook público e isolado** | O Mercado Pago precisa de um endpoint HTTPS público. O API Gateway fornece isso direto. Se o cluster EKS cair ou estiver em deploy, os webhooks continuam chegando e a saga continua de onde parou. |
+| **Carga em rajadas e baixa** | São poucas cobranças por O.S. e chegam em picos. Lambda escala a zero; um Deployment manteria réplicas ociosas no cluster. |
+| **Mesmo padrão do resto da plataforma** | Os consumers SQS e o publisher da outbox dos outros dois serviços também são Lambdas (Bref). No EKS ficam só as APIs HTTP de longa duração. |
+
+O que o enunciado exige de cada microsserviço continua valendo aqui:
+
+- **Repositório, infraestrutura e banco próprios:** DynamoDB `payment-saga-state`, que é o banco NoSQL da solução.
+  Nenhum outro serviço acessa esse banco; a comunicação é por `POST /orders`, SQS e `callback_url`.
+- **Pipeline independente** ([`deploy.yml`](.github/workflows/deploy.yml)): testes unitários (Jest), BDD da saga
+  (Cucumber executando a ASL real) e deploy por Terraform.
+- **Observabilidade da Fase 3:** New Relic, pela layer das Lambdas e pelo evento `PaymentSaga` (veja [Monitoramento](#monitoramento)).
+
+Custos da escolha:
+
+- Dependência da AWS (Step Functions, API Gateway).
+- Cold start nas Lambdas.
+- Não dá para subir o serviço inteiro localmente. Para compensar, os testes BDD rodam a definição real da
+  máquina de estados (`infra/state-machine/payment-saga.asl.json`) com os handlers reais e fakes da AWS em memória.
+
 ---
 
 ## Pré-requisitos
@@ -86,7 +116,7 @@ mp_webhook_secret    = "..."            # Assinatura secreta do Webhook da MESMA
 # Via variáveis de ambiente (somem ao fechar o terminal — nada salvo no computador):
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
-export AWS_SESSION_TOKEN="..."   # somente para credenciais temporárias (ex: AWS Academy)
+export AWS_SESSION_TOKEN="..."   # somente para credenciais temporárias (STS/SSO)
 export AWS_DEFAULT_REGION="us-east-1"
 ```
 
@@ -181,8 +211,9 @@ Comportamento do pipeline:
 
 | Gatilho | O que roda |
 |---|---|
-| Push na `main` | Apenas **Test** (`npm test` + `npm run test:bdd`) |
-| *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy** (`terraform init/plan/apply`) |
+| Pull request para a `main` | Apenas **Test** (`npm test` + `npm run test:bdd`), check obrigatório do PR |
+| Push na `main` (merge do PR) | **Test** → **Deploy** (`terraform init/plan/apply`) |
+| *Actions > Deploy Payment Service > Run workflow* (na `main`) | **Test** → **Deploy**, para redeploy sem novo commit |
 
 O deploy usa as credenciais dos secrets `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` do repositório;
 não há inputs no *Run workflow*. O bucket do Terraform state é fixo em `infra/providers.tf`.
@@ -230,7 +261,7 @@ payment-service ──(api_base_url)──▶ application
 application ──(callback_url / notification_url, por mensagem)──▶ payment-service
 ```
 
-1. **Deploy do payment-service** (este repo, `workflow_dispatch`). O resumo do job mostra:
+1. **Deploy do payment-service** (este repo, push na `main` ou *Run workflow*). O resumo do job mostra:
    - `api_base_url` → base da API (para conferência; o app descobre sozinho)
    - `webhook_url` → configurar no painel do Mercado Pago (uma vez)
 2. **Deploy do application** (repo `tech-challenge-kubernetes`, workflow `deploy-eks.yml`). O job `rollout` resolve automaticamente:
@@ -242,7 +273,7 @@ Quando reexecutar cada um:
 | Mudou | Ação |
 |---|---|
 | Código/infra do payment-service (API Gateway mantido) | Só redeploy do payment-service |
-| API Gateway recriado (`destroy`/lab resetado) | Redeploy do payment-service **e** rodar o `deploy-eks` de novo (redescobre a URL) |
+| API Gateway recriado (`destroy`) | Redeploy do payment-service **e** rodar o `deploy-eks` de novo (redescobre a URL) |
 | ELB do app mudou | Só redeploy do app — cobranças **já abertas** perdem o retorno (URL antiga gravada na SAGA) |
 
 ## Configurar o Mercado Pago (ambiente de teste)
@@ -289,12 +320,12 @@ curl -s -H "Authorization: Bearer APP_USR-..." https://api.mercadopago.com/users
 A assinatura é por aplicação: trocou de aplicação, troque também o `MP_WEBHOOK_SECRET`,
 senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
 
-> **O ID do API Gateway muda quando ele é recriado** (lab resetado, `destroy`). Depois de cada deploy, confira se a URL
+> **O ID do API Gateway muda quando ele é recriado** (`destroy`, recriação do recurso). Depois de cada deploy, confira se a URL
 > no painel do MP é igual ao output `webhook_url`. Com a URL antiga, o pagamento é aprovado no MP mas nunca chega à SAGA.
 
 ### 4. Publicar as credenciais
 
-Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy manual.
+Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy (*Run workflow*, ou um novo merge na `main`).
 Com token `APP_USR-` a Lambda devolve o `init_point` (com `TEST-` devolve o `sandbox_init_point`).
 
 ---
@@ -439,12 +470,12 @@ Abra a pasta `bruno/` no [Bruno](https://www.usebruno.com/) como collection.
 ### New Relic
 
 As 7 Lambdas usam a layer `NewRelicNodeJS24X` (agente Node.js + Lambda Extension), que envia traces, erros e logs
-direto ao New Relic com a license key — sem IAM role, compatível com a `LabRole`. Liga sozinho quando os secrets
+direto ao New Relic com a license key — sem precisar da integração AWS do New Relic. Liga sozinho quando os secrets
 `NEW_RELIC_LICENSE_KEY` e `NEW_RELIC_ACCOUNT_ID` existem no repo; sem eles o deploy sobe sem monitoramento.
 Detalhes, eventos e consultas: [`docs/monitoring.md`](docs/monitoring.md).
 
 **Onde ver os dados.** As Lambdas **não aparecem em *APM & Services*** (a entidade de Lambda exige a integração AWS do
-New Relic, que precisa de `iam:CreateRole`). Os dados ficam em *Query your data* (aba NRQL — a busca ⌘K não executa NRQL):
+New Relic, que não está configurada). Os dados ficam em *Query your data* (aba NRQL — a busca ⌘K não executa NRQL):
 
 ```sql
 -- Funil por etapa
@@ -588,7 +619,7 @@ tech-challenge-payment-service/
 │   ├── sqs.tf                    # Fila payment-orders + DLQ
 │   ├── dynamodb.tf               # Tabela payment-saga-state + GSI + TTL
 │   ├── secrets.tf                # mp-access-token + mp-webhook-secret
-│   ├── iam.tf                    # Data source da LabRole (AWS Academy não permite criar roles)
+│   ├── iam.tf                    # Roles próprias das Lambdas e da Step Functions (escopo mínimo)
 │   ├── lambda-build.tf           # null_resource (npm ci --omit=dev) + archive_file
 │   ├── lambda-trigger.tf
 │   ├── lambda-register.tf

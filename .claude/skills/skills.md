@@ -14,7 +14,7 @@ Fluxo padrão para qualquer alteração de infraestrutura Terraform.
 ```bash
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
-export AWS_SESSION_TOKEN="..."        # apenas AWS Academy (credenciais temporárias)
+export AWS_SESSION_TOKEN="..."        # apenas credenciais temporárias (STS/SSO)
 export AWS_DEFAULT_REGION="us-east-1"
 ```
 
@@ -47,7 +47,7 @@ Adiciona uma nova função Lambda ao payment-service.
 
 **Quando usar:** criar um novo handler (ex: status de pagamento, reprocessamento, etc.).
 
-**Constraint obrigatório:** AWS Academy bloqueia `iam:CreateRole`. Usar sempre `data.aws_iam_role.lab_role.arn` como role (já declarado em `infra/iam.tf`).
+**Role:** usar `aws_iam_role.payment_lambda.arn` (declarada em `infra/iam.tf`). Se a Lambda nova acessar outro recurso AWS, adicionar a permissão em `aws_iam_role_policy.payment_lambda`.
 
 **Checklist:**
 
@@ -62,7 +62,7 @@ Adiciona uma nova função Lambda ao payment-service.
 ```hcl
 resource "aws_lambda_function" "{nome}" {
   function_name    = "payment-{nome}"
-  role             = data.aws_iam_role.lab_role.arn   # LabRole — AWS Academy
+  role             = aws_iam_role.payment_lambda.arn
   runtime          = "nodejs24.x"
   handler          = local.newrelic_enabled ? local.newrelic_wrapper_handler : "{nome}/index.handler"
   layers           = local.newrelic_layers
@@ -511,7 +511,7 @@ NEW_RELIC_ACCOUNT_ID
 O bucket de state é derivado automaticamente no CI via `aws sts get-caller-identity`.
 
 ```bash
-# Disparar deploy manual via GitHub CLI
+# Deploy roda sozinho a cada push na main; para redeploy sem commit:
 gh workflow run deploy.yml --ref main
 
 # Verificar status
