@@ -32,6 +32,31 @@ Mercado Pago → POST /webhook → API Gateway → λ Callback
 
 ---
 
+## Por que serverless (Lambda + Step Functions) e não Kubernetes
+
+O application e o services-ms rodam no EKS. O payment-service foi feito **serverless de propósito**: o que ele faz
+é coordenar uma Saga longa e orientada a eventos, e um orquestrador gerenciado resolve isso melhor do que pods.
+
+| Necessidade da Saga de pagamento | Em Lambda + Step Functions | Se fosse no Kubernetes |
+|---|---|---|
+| Esperar o pagamento por até 48 h (e repetir a geração do link no dia seguinte) | `WaitForTaskToken` e `Wait` não consomem computação; o estado de cada saga fica guardado pelo Step Functions | Pods ligados o tempo todo, mais timers e estado próprios num banco |
+| Retry, compensação e timeout | Declarados na ASL (`Retry`, `Catch`, `HeartbeatSeconds`, `TimeoutSeconds`) | Teria de ser programado e operado (ou instalar Temporal/Camunda no cluster) |
+| Rastrear cada saga | Histórico visual de cada execução no console, além do New Relic | Só por logs e traces |
+| Carga esporádica (uma cobrança por O.S.) | Escala a zero; paga por execução; trigger com concorrência máxima de 5 protege o Mercado Pago | Réplicas mínimas sempre ativas |
+| Webhook do Mercado Pago sempre disponível | API Gateway + Lambda independem do cluster: se o EKS cair, o pagamento continua sendo registrado | O webhook cai junto com o cluster |
+
+Como os requisitos da Fase 4 são atendidos nesse modelo:
+
+- **Repositório, infraestrutura e banco próprios:** este repositório, Terraform em `infra/` e DynamoDB `payment-saga-state` (o banco NoSQL do projeto).
+- **Pipeline independente com deploy automatizado:** cada merge na `main` roda testes unitários (Jest) e BDD (Cucumber) e, se passarem, faz o `terraform apply`. O build é o empacotamento das Lambdas (`infra/lambda-build.tf`). Veja [Deploy via CI/CD](#deploy-via-cicd-github-actions).
+- **Integração com os serviços no Kubernetes:** o application (EKS) chama `POST /orders` pelo API Gateway. O workflow `deploy-eks` do `tech-challenge-kubernetes` descobre a URL da API sozinho, e o retorno volta por `notification_url` e `callback_url`.
+- **Observabilidade:** New Relic nas Lambdas, como nos serviços do EKS (ver [Monitoramento](#monitoramento)).
+
+Custos da escolha: não há Dockerfile nem manifestos Kubernetes neste serviço, e ele fica preso à AWS. Para testar
+sem a nuvem, os testes BDD executam a mesma definição da máquina de estados com fakes em memória.
+
+---
+
 ## Pré-requisitos
 
 | Ferramenta | Versão mínima | Instalação |
@@ -177,11 +202,21 @@ Comportamento do pipeline:
 
 | Gatilho | O que roda |
 |---|---|
-| Push na `main` | Apenas **Test** (`npm test` + `npm run test:bdd`) |
-| *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy** (`terraform init/plan/apply`) |
+| Pull request para a `main` | Apenas **Test** (`npm test` + `npm run test:bdd`), check obrigatório para o merge |
+| Push na `main` (merge do PR) | **Test** → **Deploy** (`terraform init/plan/apply`) automaticamente |
+| Push que só muda `*.md`, `docs/`, `bruno/` ou `postman/` | Nada (não redeploya) |
+| *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy**, para redeploy manual |
 
-O deploy manual pede como inputs `aws_access_key_id`, `aws_secret_access_key` e `aws_session_token`
-— copie de *AWS Academy > AWS Details > AWS CLI* (expiram em ~3h; são mascarados no log).
+Credenciais AWS do deploy, também em secrets do repositório:
+
+| Secret | Descrição |
+|---|---|
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Credenciais usadas no deploy automático (as mesmas do services-ms) |
+| `AWS_SESSION_TOKEN` | Só para credenciais temporárias do AWS Academy (*AWS Details > AWS CLI*) |
+
+Se as credenciais expirarem, o passo **Verify AWS credentials** falha com a instrução para atualizá-las.
+Atualize os secrets e use *Re-run jobs*. O *Run workflow* também aceita as três credenciais como inputs
+opcionais, que são mascarados no log e têm prioridade sobre os secrets.
 O bucket do Terraform state é derivado automaticamente via `aws sts get-caller-identity`.
 
 ---
@@ -227,7 +262,7 @@ payment-service ──(api_base_url)──▶ application
 application ──(callback_url / notification_url, por mensagem)──▶ payment-service
 ```
 
-1. **Deploy do payment-service** (este repo, `workflow_dispatch`). O resumo do job mostra:
+1. **Deploy do payment-service** (este repo, automático no merge na `main` ou *Run workflow*). O resumo do job mostra:
    - `api_base_url` → base da API (para conferência; o app descobre sozinho)
    - `webhook_url` → configurar no painel do Mercado Pago (uma vez)
 2. **Deploy do application** (repo `tech-challenge-kubernetes`, workflow `deploy-eks.yml`). O job `rollout` resolve automaticamente:
@@ -291,7 +326,7 @@ senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
 
 ### 4. Publicar as credenciais
 
-Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy manual.
+Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode *Run workflow* (o deploy automático só dispara com mudança de código).
 Com token `APP_USR-` a Lambda devolve o `init_point` (com `TEST-` devolve o `sandbox_init_point`).
 
 ---

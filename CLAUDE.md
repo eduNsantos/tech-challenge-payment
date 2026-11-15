@@ -134,7 +134,8 @@ TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_u
 NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
 NEW_RELIC_ACCOUNT_ID       # layer ARN é fixado em infra/variables.tf (newrelic_layer_arn)
 ```
-Push para `main` roda só `npm test` + `npm run test:bdd` (Node 24). Deploy (`terraform plan/apply`) só via `workflow_dispatch` (credenciais Academy expiram).
+PR roda só `npm test` + `npm run test:bdd` (Node 24, check obrigatório `Test`). Push na `main` (exceto só `*.md`/`docs/`/`bruno/`/`postman/`) roda Test → Deploy (`terraform plan/apply`) com os secrets `AWS_*`; `workflow_dispatch` aceita credenciais como inputs opcionais. Credencial expirada → falha no passo `Verify AWS credentials`.
+Por que serverless e não EKS: seção "Por que serverless" do README (justificativa exigida pela Fase 4).
 Nova tentativa do link: `link_retry_wait_seconds` (padrão 86400) e `link_retry_max_attempts` (padrão 3) em `infra/variables.tf`. Para testar, use espera curta (≥ 60s). Só falhas do passo ② voltam ao ciclo; `EXPIRED` não. Não há SNS: a DLQ só retém as mensagens (14 dias).
 As variáveis `mp_access_token`/`mp_webhook_secret` têm `validation` contra valor vazio — evita sobrescrever os secrets com string vazia.
 
