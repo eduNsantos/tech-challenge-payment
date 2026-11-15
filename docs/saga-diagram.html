@@ -84,7 +84,7 @@ figcaption code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; bac
         O app envia o pedido em <code>POST /orders</code>; a λ <code>payment-orders-api</code> valida o payload, gera o
         <code>idempotency_key</code> (SHA-256) e enfileira no SQS. A λ <code>payment-trigger</code> inicia a execução com
         <code>name = idempotency_key</code>, o que rejeita duplicatas. O Step Functions registra o pedido (passo 1), cria a preferência
-        no Mercado Pago (passo 2) e envia o link para a <code>notification_url</code> (passo 3), parando no <code>waitForTaskToken</code> (passo 4).
+        no Mercado Pago (passo 2) — se o Mercado Pago falhar, a SAGA espera 1 dia e tenta de novo, até 3 vezes, antes de ir para a DLQ — e envia o link para a <code>notification_url</code> (passo 3), parando no <code>waitForTaskToken</code> (passo 4).
         O pagamento volta por um caminho independente: Mercado Pago → <code>POST /webhook</code> → λ <code>payment-callback</code>,
         que valida o HMAC, consulta o pagamento e resolve o passo 4 com <code>sendTaskSuccess</code> (PAID) ou
         <code>sendTaskFailure</code> (REJECTED), avisando a <code>callback_url</code>. Sem pagamento em 48h, o passo 5 marca EXPIRED,
@@ -110,6 +110,7 @@ if (location.hash === '#dark' || location.hash === '#light') document.documentEl
 const KIND = {
   neut: { stroke: 'var(--fg)',    fill: 'var(--c-neut-bg)', title: 'var(--fg)' },
   step: { stroke: 'var(--c-sf)',  fill: 'var(--c-step-bg)', title: 'var(--fg)' },
+  wait: { stroke: 'var(--c-sf)',  fill: 'var(--c-step-bg)', title: 'var(--c-sf)' },
   ok:   { stroke: 'var(--c-ok)',  fill: 'var(--c-ok-bg)',   title: 'var(--c-ok)' },
   rej:  { stroke: 'var(--c-rej)', fill: 'var(--c-rej-bg)',  title: 'var(--c-rej)' },
   bad:  { stroke: 'var(--c-dlq)', fill: 'var(--c-dlq-bg)',  title: 'var(--c-dlq)' },
@@ -129,7 +130,7 @@ const BOXES = [
   [680, 20, 185, 64, 'neut', 'SQS payment-orders', ['Standard · redrive 3x → DLQ']],
   [910, 20, 230, 64, 'neut', 'λ payment-trigger', ['máx 5 concorrentes · StartExecution', 'name = idempotency_key']],
   // Coluna esquerda
-  [20, 165, 150, 64, 'neut', 'SNS', ['tópico de alerta', 'sem assinatura'], { dash: true }],
+  [20, 165, 150, 64, 'wait', 'AGUARDAR 1 DIA', ['link falhou 3x → espera', 'e refaz o passo 2 (até 3×)'], { dash: true }],
   [20, 265, 150, 64, 'bad', 'DLQ', ['payment-orders-dlq', 'retenção 14 dias']],
   // Passos
   [225, 175, 670, 64, 'step', 'REGISTRAR', ['valida CPF/CNPJ e soma dos itens = amount_cents · DynamoDB → PENDING'], { tag: 'λ payment-register', n: 1 }],
@@ -169,8 +170,9 @@ const WIRES = [
   [[[816, 509], [816, 565]], 'red', { labels: [[822, 542, 'timeout 48h']] }],
   // Falhas
   [[[225, 207], [212, 207], [212, 550], [303, 550], [303, 565]], 'red', { labels: [[218, 535, 'falha']] }],
-  [[[225, 297], [170, 297]], 'red', { labels: [[197, 290, '3x', 'middle']] }],
-  [[[95, 265], [95, 229]], 'red', { dash: true, labels: [[102, 252, 'alerta (não ligado)']] }],
+  [[[225, 281], [185, 281], [185, 197], [170, 197]], 'red'],
+  [[[170, 180], [198, 180], [198, 313], [225, 313]], 'green', { dash: true }],
+  [[[95, 229], [95, 265]], 'red', { labels: [[102, 252, 'esgotou 3×']] }],
   [[[816, 637], [816, 680], [120, 680], [120, 329]], 'red', { labels: [[460, 675, 'compensação → DLQ', 'middle']] }],
   [[[60, 329], [60, 601], [225, 601]], 'red', { labels: [[66, 595, 'SagaFalhou']] }],
   // Estado e externos

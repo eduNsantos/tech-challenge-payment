@@ -16,7 +16,6 @@ O payment-service implementa o padrão **SAGA com Orquestração** usando AWS St
 | Orquestrador | AWS Step Functions | Executa os 5 passos da SAGA |
 | Estado | DynamoDB | Log de estado e transições de cada saga |
 | Dead-letter | SQS DLQ | Recebe sagas que falharam definitivamente |
-| Notificação | SNS | Notifica serviço externo quando mensagem vai para DLQ |
 | Webhook | API Gateway v2 + Lambda Callback | Recebe callbacks do Mercado Pago e notifica App via `callback_url` |
 
 ---
@@ -51,9 +50,11 @@ O payment-service implementa o padrão **SAGA com Orquestração** usando AWS St
 ### Step ② — GERAR LINK
 
 - Chama a API do Mercado Pago para criar a preferência de pagamento
-- Retry: 3 tentativas com backoff exponencial, timeout de 3s por tentativa
+- Retry rápido: 3 tentativas com backoff exponencial (máx. 10s entre elas)
 - Envia `order_id` como `external_reference` para conciliação no callback
-- **Compensação:** 3 falhas consecutivas → aborta a saga → mensagem vai para DLQ
+- **Nova tentativa diária:** se as 3 tentativas rápidas falharem, a SAGA espera 1 dia (`Wait`) e chama o passo de novo,
+  até 3 vezes (`link_retry_wait_seconds` / `link_retry_max_attempts`). O contador fica em `$.link_retry.count`
+- **Compensação:** esgotadas as novas tentativas → mensagem vai para a DLQ → `SagaFalhou`
 
 ### Step ③ — NOTIFICAR APP
 
@@ -74,7 +75,8 @@ O payment-service implementa o padrão **SAGA com Orquestração** usando AWS St
 
 - Cancela o link de pagamento no Mercado Pago
 - Atualiza DynamoDB: `status = EXPIRED`
-- Envia mensagem para DLQ → SNS notifica serviço externo
+- Faz POST na `callback_url` com status `EXPIRED`
+- Envia mensagem para a DLQ
 
 ---
 
@@ -170,16 +172,20 @@ Ao usar `POST /orders`, o Lambda `payment-orders-api` gera o hash automaticament
 ### DLQ Alimentador 1 — falha no gateway
 
 ```
-Step ② esgota 3 tentativas → aborta saga → DynamoDB: FAILED → DLQ → SNS
+Step ② falha 3x (retry rápido) → espera 1 dia → tenta de novo   (até 3 dias)
+                                                → esgotou → DLQ → SagaFalhou
 ```
+
+Durante a espera o pedido fica em `PENDING` no DynamoDB.
 
 ### DLQ Alimentador 2 — timeout de 48h
 
 ```
-Step ④ timeout → Step ⑤ (cancela gateway) → DynamoDB: EXPIRED → DLQ → SNS
+Step ④ timeout → Step ⑤ (cancela gateway) → DynamoDB: EXPIRED → POST callback_url → DLQ
 ```
 
-Ambos os casos disparam o SNS para notificação ao serviço externo.
+Pedidos `EXPIRED` não voltam ao ciclo: o cliente teve 48h para pagar.
+A DLQ não dispara notificação; as mensagens ficam retidas por 14 dias para análise.
 
 ---
 

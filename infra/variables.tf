@@ -31,6 +31,28 @@ variable "app_notification_url" {
   description = "Fallback opcional: URL para receber o link de pagamento quando a mensagem nao traz notification_url. O application envia notification_url em cada pedido, entao o deploy do payment-service nao depende da URL do app."
 }
 
+variable "link_retry_wait_seconds" {
+  type        = number
+  default     = 86400
+  description = "Espera entre novas tentativas de gerar o link quando o Mercado Pago falha (padrão: 1 dia). Use valores baixos só para teste"
+
+  validation {
+    condition     = var.link_retry_wait_seconds >= 60
+    error_message = "link_retry_wait_seconds deve ser >= 60."
+  }
+}
+
+variable "link_retry_max_attempts" {
+  type        = number
+  default     = 3
+  description = "Quantas novas tentativas (uma a cada link_retry_wait_seconds) antes de mandar o pedido para a DLQ"
+
+  validation {
+    condition     = var.link_retry_max_attempts >= 0 && var.link_retry_max_attempts <= 30
+    error_message = "link_retry_max_attempts deve estar entre 0 e 30."
+  }
+}
+
 variable "checkout_back_url_success" {
   type        = string
   default     = ""

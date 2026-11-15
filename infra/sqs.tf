@@ -20,22 +20,3 @@ resource "aws_sqs_queue" "payment_orders" {
     Name = "payment-orders"
   }
 }
-
-resource "aws_sqs_queue_policy" "dlq_sns" {
-  queue_url = aws_sqs_queue.dlq.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = { Service = "sns.amazonaws.com" }
-        Action    = "sqs:SendMessage"
-        Resource  = aws_sqs_queue.dlq.arn
-        Condition = {
-          ArnEquals = { "aws:SourceArn" = aws_sns_topic.dlq_notifications.arn }
-        }
-      }
-    ]
-  })
-}
