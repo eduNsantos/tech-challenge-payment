@@ -8,16 +8,16 @@ function validateCpf(cpf) {
   if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
 
   let sum = 0;
-  for (let i = 0; i < 9; i++) sum += parseInt(cpf[i]) * (10 - i);
+  for (let i = 0; i < 9; i++) sum += Number.parseInt(cpf[i]) * (10 - i);
   let rem = (sum * 10) % 11;
   if (rem === 10 || rem === 11) rem = 0;
-  if (rem !== parseInt(cpf[9])) return false;
+  if (rem !== Number.parseInt(cpf[9])) return false;
 
   sum = 0;
-  for (let i = 0; i < 10; i++) sum += parseInt(cpf[i]) * (11 - i);
+  for (let i = 0; i < 10; i++) sum += Number.parseInt(cpf[i]) * (11 - i);
   rem = (sum * 10) % 11;
   if (rem === 10 || rem === 11) rem = 0;
-  return rem === parseInt(cpf[10]);
+  return rem === Number.parseInt(cpf[10]);
 }
 
 function validateCnpj(cnpj) {
@@ -27,14 +27,14 @@ function validateCnpj(cnpj) {
     const weights = base.length === 12
       ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
       : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-    const sum = weights.reduce((acc, w, i) => acc + parseInt(base[i]) * w, 0);
+    const sum = weights.reduce((acc, w, i) => acc + Number.parseInt(base[i]) * w, 0);
     const rem = sum % 11;
     return rem < 2 ? 0 : 11 - rem;
   };
 
   const d1 = digit(cnpj.slice(0, 12));
   const d2 = digit(cnpj.slice(0, 12) + d1);
-  return d1 === parseInt(cnpj[12]) && d2 === parseInt(cnpj[13]);
+  return d1 === Number.parseInt(cnpj[12]) && d2 === Number.parseInt(cnpj[13]);
 }
 
 // customer.cpf aceita CPF (11 dígitos) ou CNPJ (14 dígitos); document_type é opcional e, se enviado, deve bater com o tamanho

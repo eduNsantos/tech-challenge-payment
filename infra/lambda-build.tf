@@ -15,7 +15,7 @@ data "archive_file" "payment_lambdas" {
   type        = "zip"
   source_dir  = "${path.module}/../src"
   output_path = "${path.module}/../build/payment-lambdas.zip"
-  excludes    = ["test", "*.test.js", "features", "cucumber.js"]
+  excludes    = ["test", "*.test.js", "features", "cucumber.js", "coverage", ".c8rc.json"]
 
   depends_on = [null_resource.lambda_deps]
 }

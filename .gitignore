@@ -27,3 +27,7 @@ infra/backend.hcl
 
 # OS
 .DS_Store
+
+# Cobertura e SonarQube
+src/coverage/
+.scannerwork/
