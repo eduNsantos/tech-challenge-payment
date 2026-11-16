@@ -277,6 +277,25 @@ Secrets Manager, Mercado Pago e o application são substituídos por fakes em me
 > com `templatefile`) e rode `npm run test:bdd`. A documentação dos testes BDD de todo o projeto está em
 > `docs/Fase4/testes-bdd.md` no repositório tech-challenge-application.
 
+### Cobertura e qualidade (SonarQube)
+
+```bash
+cd src
+npm run test:coverage   # Jest + Cucumber com c8 → src/coverage/lcov.info
+cd ..
+docker run --rm -e SONAR_HOST_URL=http://host.docker.internal:9000 -e SONAR_TOKEN=sqa_xxx \
+  -v "$PWD:/usr/src" sonarsource/sonar-scanner-cli   # lê sonar-project.properties
+```
+
+A cobertura soma os testes unitários e os cenários BDD, que exercitam o callback e o trigger com a ASL real.
+Última análise (projeto `tech-challenge-payment-service`, perfil *Sonar way*):
+
+| Quality Gate | Cobertura | Duplicação | Segurança | Confiabilidade | Manutenibilidade |
+|---|---|---|---|---|---|
+| ✅ Passed | **85,8%** | 0% | A (0 issues) | A (0 issues) | A (0 issues) |
+
+![Dashboard do SonarQube — payment-service](https://raw.githubusercontent.com/eduNsantos/tech-challenge-application/main/docs/Fase4/sonarqube/sonarqube-fase4-payment.png)
+
 ---
 
 ## Integração com o tech-challenge-application (ordem de deploy)
