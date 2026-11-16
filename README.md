@@ -47,23 +47,6 @@ exatamente esse perfil.
 | Webhook do Mercado Pago sempre disponível | API Gateway + Lambda são gerenciados pela AWS, sem servidor para manter no ar |
 | Estado da cobrança consultado por chave | DynamoDB sob demanda, com índice por `order_id` para o webhook localizar a saga |
 
----|---|---|
-| Esperar o pagamento por até 48 h (e repetir a geração do link no dia seguinte) | `WaitForTaskToken` e `Wait` não consomem computação; o estado de cada saga fica guardado pelo Step Functions | Pods ligados o tempo todo, mais timers e estado próprios num banco |
-| Retry, compensação e timeout | Declarados na ASL (`Retry`, `Catch`, `HeartbeatSeconds`, `TimeoutSeconds`) | Teria de ser programado e operado (ou instalar Temporal/Camunda no cluster) |
-| Rastrear cada saga | Histórico visual de cada execução no console, além do New Relic | Só por logs e traces |
-| Carga esporádica (uma cobrança por O.S.) | Escala a zero; paga por execução; trigger com concorrência máxima de 5 protege o Mercado Pago | Réplicas mínimas sempre ativas |
-| Webhook do Mercado Pago sempre disponível | API Gateway + Lambda independem do cluster: se o EKS cair, o pagamento continua sendo registrado | O webhook cai junto com o cluster |
-
-Como os requisitos da Fase 4 são atendidos nesse modelo:
-
-- **Repositório, infraestrutura e banco próprios:** este repositório, Terraform em `infra/` e DynamoDB `payment-saga-state` (o banco NoSQL do projeto).
-- **Pipeline independente com deploy automatizado:** cada merge na `main` roda testes unitários (Jest) e BDD (Cucumber) e, se passarem, faz o `terraform apply`. O build é o empacotamento das Lambdas (`infra/lambda-build.tf`). Veja [Deploy via CI/CD](#deploy-via-cicd-github-actions).
-- **Integração com os serviços no Kubernetes:** o application (EKS) chama `POST /orders` pelo API Gateway. O workflow `deploy-eks` do `tech-challenge-kubernetes` descobre a URL da API sozinho, e o retorno volta por `notification_url` e `callback_url`.
-- **Observabilidade:** New Relic nas Lambdas, como nos serviços do EKS (ver [Monitoramento](#monitoramento)).
-
-Custos da escolha: não há Dockerfile nem manifestos Kubernetes neste serviço, e ele fica preso à AWS. Para testar
-sem a nuvem, os testes BDD executam a mesma definição da máquina de estados com fakes em memória.
-
 ---
 
 ## Pré-requisitos
