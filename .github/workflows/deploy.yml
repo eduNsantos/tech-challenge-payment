@@ -4,12 +4,31 @@ on:
   push:
     branches:
       - main
-  # PR: só o job Test (check obrigatório da regra de proteção da main).
-  # Push na main e Run workflow: Test → Deploy.
+    # Mudança só de documentação/collections não redeploya
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'bruno/**'
+      - 'postman/**'
+  # Check obrigatório (Test) da regra de proteção da main; PR nunca faz deploy
   pull_request:
     branches:
       - main
+  # Redeploy manual. Inputs vazios → usa os secrets AWS_* do repositório
   workflow_dispatch:
+    inputs:
+      aws_access_key_id:
+        description: 'AWS Access Key ID (opcional — vazio usa o secret AWS_ACCESS_KEY_ID)'
+        required: false
+        type: string
+      aws_secret_access_key:
+        description: 'AWS Secret Access Key (opcional)'
+        required: false
+        type: string
+      aws_session_token:
+        description: 'AWS Session Token (opcional — só para credenciais temporárias do Academy)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -48,7 +67,7 @@ jobs:
   deploy:
     name: Deploy
     needs: test
-    # Deploy automático a cada push na main (merge de PR); Run workflow permite redeploy manual.
+    # Deploy automático a cada push (merge de PR) na main, depois dos testes; PR só testa
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
@@ -66,20 +85,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Falha antes do apply se o secret do GitHub não existir (evita gravar token vazio)
-      - name: Check MP access token
+      # Inputs manuais não são secrets: mascarar antes de qualquer uso para suprimir das logs
+      - name: Mask AWS credentials
+        if: github.event_name == 'workflow_dispatch' && inputs.aws_access_key_id != ''
         run: |
-          if [ -z "$(printf '%s' "$MP_ACCESS_TOKEN" | tr -d '[:space:]')" ]; then
-            echo "::error::Secret MP_ACCESS_TOKEN vazio ou ausente no GitHub."
-            exit 1
-          fi
+          echo "::add-mask::${{ inputs.aws_access_key_id }}"
+          echo "::add-mask::${{ inputs.aws_secret_access_key }}"
+          echo "::add-mask::${{ inputs.aws_session_token }}"
 
+      # Push: secrets do repositório (mesmo padrão do services-ms). Dispatch: inputs, se informados
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id:     ${{ inputs.aws_access_key_id || secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ inputs.aws_secret_access_key || secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ inputs.aws_session_token || secrets.AWS_SESSION_TOKEN }}
           aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Verify AWS credentials
+        run: |
+          if ! aws sts get-caller-identity --query Account --output text; then
+            echo "::error::Credenciais AWS inválidas ou expiradas. Atualize os secrets AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (e AWS_SESSION_TOKEN no Academy) e rode o workflow de novo."
+            exit 1
+          fi
 
       - name: Install Lambda dependencies
         run: |

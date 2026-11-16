@@ -62,6 +62,23 @@ Custos da escolha:
 
 ---
 
+## Por que serverless (Lambda + Step Functions)
+
+O payment-service coordena uma Saga longa e orientada a eventos: registra a cobrança, gera o link, espera o
+pagamento por até 48 h e compensa se ele não vier. Um orquestrador gerenciado com funções sob demanda atende
+exatamente esse perfil.
+
+| Necessidade da Saga de pagamento | Como Lambda + Step Functions atendem |
+|---|---|
+| Esperar o pagamento por até 48 h (e repetir a geração do link no dia seguinte) | `WaitForTaskToken` e `Wait` não consomem computação durante a espera; o estado de cada saga fica guardado pelo Step Functions |
+| Retry, compensação e timeout | Declarados na máquina de estados (`Retry`, `Catch`, `HeartbeatSeconds`, `TimeoutSeconds`), sem código de coordenação |
+| Rastrear cada saga | Histórico visual de cada execução no console, além do New Relic |
+| Carga esporádica (uma cobrança por O.S.) | Escala a zero e paga por execução; o trigger com concorrência máxima de 5 protege o Mercado Pago |
+| Webhook do Mercado Pago sempre disponível | API Gateway + Lambda são gerenciados pela AWS, sem servidor para manter no ar |
+| Estado da cobrança consultado por chave | DynamoDB sob demanda, com índice por `order_id` para o webhook localizar a saga |
+
+---
+
 ## Pré-requisitos
 
 | Ferramenta | Versão mínima | Instalação |
@@ -211,12 +228,22 @@ Comportamento do pipeline:
 
 | Gatilho | O que roda |
 |---|---|
-| Pull request para a `main` | Apenas **Test** (`npm test` + `npm run test:bdd`), check obrigatório do PR |
-| Push na `main` (merge do PR) | **Test** → **Deploy** (`terraform init/plan/apply`) |
-| *Actions > Deploy Payment Service > Run workflow* (na `main`) | **Test** → **Deploy**, para redeploy sem novo commit |
+| Pull request para a `main` | Apenas **Test** (`npm test` + `npm run test:bdd`), check obrigatório para o merge |
+| Push na `main` (merge do PR) | **Test** → **Deploy** (`terraform init/plan/apply`) automaticamente |
+| Push que só muda `*.md`, `docs/`, `bruno/` ou `postman/` | Nada (não redeploya) |
+| *Actions > Deploy Payment Service > Run workflow* | **Test** → **Deploy**, para redeploy manual |
 
-O deploy usa as credenciais dos secrets `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` do repositório;
-não há inputs no *Run workflow*. O bucket do Terraform state é fixo em `infra/providers.tf`.
+Credenciais AWS do deploy, também em secrets do repositório:
+
+| Secret | Descrição |
+|---|---|
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Credenciais usadas no deploy automático (as mesmas do services-ms) |
+| `AWS_SESSION_TOKEN` | Só para credenciais temporárias do AWS Academy (*AWS Details > AWS CLI*) |
+
+Se as credenciais expirarem, o passo **Verify AWS credentials** falha com a instrução para atualizá-las.
+Atualize os secrets e use *Re-run jobs*. O *Run workflow* também aceita as três credenciais como inputs
+opcionais, que são mascarados no log e têm prioridade sobre os secrets.
+O bucket do Terraform state é derivado automaticamente via `aws sts get-caller-identity`.
 
 ---
 
@@ -261,7 +288,7 @@ payment-service ──(api_base_url)──▶ application
 application ──(callback_url / notification_url, por mensagem)──▶ payment-service
 ```
 
-1. **Deploy do payment-service** (este repo, push na `main` ou *Run workflow*). O resumo do job mostra:
+1. **Deploy do payment-service** (este repo, automático no merge na `main` ou *Run workflow*). O resumo do job mostra:
    - `api_base_url` → base da API (para conferência; o app descobre sozinho)
    - `webhook_url` → configurar no painel do Mercado Pago (uma vez)
 2. **Deploy do application** (repo `tech-challenge-kubernetes`, workflow `deploy-eks.yml`). O job `rollout` resolve automaticamente:
@@ -325,7 +352,7 @@ senão todo webhook volta `401` e a SAGA fica parada em `WAITING_PAYMENT`.
 
 ### 4. Publicar as credenciais
 
-Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode o deploy (*Run workflow*, ou um novo merge na `main`).
+Atualize `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` no GitHub e rode *Run workflow* (o deploy automático só dispara com mudança de código).
 Com token `APP_USR-` a Lambda devolve o `init_point` (com `TEST-` devolve o `sandbox_init_point`).
 
 ---
