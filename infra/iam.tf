@@ -42,10 +42,15 @@ data "aws_iam_policy_document" "payment_lambda" {
   statement {
     sid     = "SecretsManager"
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      aws_secretsmanager_secret.mp_access_token.arn,
-      aws_secretsmanager_secret.mp_webhook_secret.arn,
-    ]
+    # A New Relic Lambda Extension lê a license key deste secret; sem a permissão ela
+    # loga "No license key available" e roda em no-op (nenhum span/evento/log enviado).
+    resources = concat(
+      [
+        aws_secretsmanager_secret.mp_access_token.arn,
+        aws_secretsmanager_secret.mp_webhook_secret.arn,
+      ],
+      aws_secretsmanager_secret.newrelic_license_key[*].arn,
+    )
   }
 
   # orders → SendMessage; trigger → consome via event source mapping
