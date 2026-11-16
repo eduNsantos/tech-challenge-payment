@@ -1,5 +1,5 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const { recordSagaEvent } = require('../lib/monitoring');
+const { recordSagaEvent, serviceOrderId } = require('../lib/monitoring');
 
 const sm = new SecretsManagerClient({});
 let cachedToken;
@@ -27,7 +27,7 @@ function documentType(number) {
 }
 
 exports.handler = async (event) => {
-  const { idempotency_key, order_id, amount_cents, description, customer, items } = event;
+  const { idempotency_key, order_id, amount_cents, description, customer, items, metadata } = event;
   // 1 na primeira passada; +1 a cada nova tentativa diária do Step Functions (link_retry.count)
   const attempt = (event.link_retry?.count ?? 0) + 1;
   const token = await getMpToken();
@@ -68,7 +68,7 @@ exports.handler = async (event) => {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    recordSagaEvent('generate-link', 'LINK_ERROR', { orderId: order_id, idempotencyKey: idempotency_key, httpStatus: response.status, attempt });
+    recordSagaEvent('generate-link', 'LINK_ERROR', { service_order_id: serviceOrderId(metadata), orderId: order_id, idempotencyKey: idempotency_key, httpStatus: response.status, attempt });
     const err = new Error(`Mercado Pago error ${response.status}: ${JSON.stringify(error)}`);
     err.name = 'MercadoPagoError';
     throw err;
@@ -78,7 +78,7 @@ exports.handler = async (event) => {
   const isSandbox = token.startsWith('TEST-');
 
   recordSagaEvent('generate-link', 'LINK_CREATED', {
-    orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, sandbox: isSandbox, attempt,
+    service_order_id: serviceOrderId(metadata), orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, sandbox: isSandbox, attempt,
   });
 
   return {

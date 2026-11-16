@@ -483,6 +483,8 @@ SELECT count(*) FROM PaymentSaga FACET step, status SINCE 1 hour ago
 
 -- Histórico de um pedido
 SELECT timestamp, step, status, mpStatusDetail FROM PaymentSaga WHERE orderId = '<order_id>' SINCE 3 days ago
+-- Mesma linha do tempo pelo id da O.S. (atributo comum aos três serviços)
+SELECT timestamp, step, status FROM PaymentSaga WHERE service_order_id = '<id da O.S.>' SINCE 7 days ago
 
 -- Webhooks recebidos (logs da Lambda callback)
 SELECT timestamp, message FROM Log WHERE message LIKE '%mp_webhook_received%' SINCE 2 hours ago

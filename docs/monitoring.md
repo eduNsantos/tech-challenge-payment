@@ -57,6 +57,11 @@ Nenhum dado pessoal (nome, e-mail, CPF/CNPJ) é enviado.
 
 Todos os eventos têm `orderId` e `idempotencyKey`, exceto `WEBHOOK_INVALID_SIGNATURE`, que só tem `dataId`.
 
+`orderId` é o id do **pagamento** (`payment_order_id` na aplicação), não o da O.S. Por isso os eventos também levam
+`service_order_id`, que vem de `metadata.service_order_id` do pedido. É o mesmo atributo que a aplicação e o
+services-ms enviam ao New Relic, então uma consulta segue a O.S. pelos três serviços. O dashboard "Jornada da O.S."
+fica no repositório da aplicação. Pedido sem `metadata.service_order_id` (ex.: enviado à mão pelo Bruno) não tem o atributo.
+
 > `FAILED` é gravado pelo próprio Step Functions (sem Lambda). Para acompanhar, use os erros das
 > Lambdas `payment-register` e `payment-generate-link` no New Relic.
 
