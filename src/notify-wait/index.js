@@ -1,12 +1,12 @@
 const { DynamoDBClient, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall } = require('@aws-sdk/util-dynamodb');
-const { recordSagaEvent } = require('../lib/monitoring');
+const { recordSagaEvent, serviceOrderId } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 
 exports.handler = async (event) => {
   const { taskToken, input } = event;
-  const { idempotency_key, order_id, payment_link, notification_url } = input;
+  const { idempotency_key, order_id, payment_link, notification_url, metadata } = input;
   const initPoint = payment_link?.Payload?.init_point ?? null;
 
   // Armazena o task token no DynamoDB para o lambda-callback resolver depois
@@ -47,7 +47,7 @@ exports.handler = async (event) => {
   }
 
   recordSagaEvent('notify-wait', 'WAITING_PAYMENT', {
-    orderId: order_id, idempotencyKey: idempotency_key, hasPaymentLink: Boolean(initPoint), appNotified,
+    service_order_id: serviceOrderId(metadata), orderId: order_id, idempotencyKey: idempotency_key, hasPaymentLink: Boolean(initPoint), appNotified,
   });
 
   // Retorna imediatamente — Step Functions aguarda pelo task token

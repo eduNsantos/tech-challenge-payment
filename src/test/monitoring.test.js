@@ -49,3 +49,18 @@ describe('secondsSince', () => {
     expect(secondsSince('nao-e-data')).toBeUndefined();
   });
 });
+
+describe('serviceOrderId', () => {
+  const { serviceOrderId } = require('../lib/monitoring');
+
+  test('devolve o id da O.S. enviado pela aplicação em metadata', () => {
+    expect(serviceOrderId({ source_service: 'tech-challenge-application', service_order_id: 'os-1' })).toBe('os-1');
+  });
+
+  test('ignora metadata ausente, vazia ou com id inválido', () => {
+    expect(serviceOrderId(undefined)).toBeUndefined();
+    expect(serviceOrderId({})).toBeUndefined();
+    expect(serviceOrderId({ service_order_id: '  ' })).toBeUndefined();
+    expect(serviceOrderId({ service_order_id: 123 })).toBeUndefined();
+  });
+});

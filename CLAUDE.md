@@ -169,4 +169,4 @@ Ver schema completo em `bruno/docs/sqs-message-schema.md`.
 - Secrets são buscados com cache via variável de módulo (`let cached...`)
 - Idempotência: `idempotency_key = SHA-256(order_id|amount_cents|created_at)` — gerado pelo produtor
 - O `idempotency_key` é o `name` da execução no Step Functions (rejeição nativa de duplicatas)
-- Monitoramento: `require('../lib/monitoring')` + `recordSagaEvent(step, status, attrs)` — nunca enviar dados pessoais. O pacote `newrelic` vem da layer, não do package.json. Ver `docs/monitoring.md`
+- Monitoramento: `require('../lib/monitoring')` + `recordSagaEvent(step, status, attrs)` — nunca enviar dados pessoais. Todo evento novo leva `service_order_id: serviceOrderId(metadata)` (id da O.S. da aplicação; é o atributo que liga os três serviços no New Relic). O pacote `newrelic` vem da layer, não do package.json. Ver `docs/monitoring.md`

@@ -1,7 +1,7 @@
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
-const { recordSagaEvent, secondsSince } = require('../lib/monitoring');
+const { recordSagaEvent, secondsSince, serviceOrderId } = require('../lib/monitoring');
 
 const dynamo = new DynamoDBClient({});
 const sm = new SecretsManagerClient({});
@@ -58,6 +58,7 @@ exports.handler = async (event) => {
   }));
 
   recordSagaEvent('cancel', 'EXPIRED', {
+    service_order_id: serviceOrderId(record?.metadata),
     orderId: record?.order_id,
     idempotencyKey: idempotency_key,
     amountCents: record?.amount_cents,

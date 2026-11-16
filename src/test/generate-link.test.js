@@ -6,7 +6,10 @@ jest.mock('@aws-sdk/client-secrets-manager', () => ({
 }));
 
 const mockRecord = jest.fn();
-jest.mock('../lib/monitoring', () => ({ recordSagaEvent: (...a) => mockRecord(...a) }));
+jest.mock('../lib/monitoring', () => ({
+  ...jest.requireActual('../lib/monitoring'),
+  recordSagaEvent: (...a) => mockRecord(...a),
+}));
 
 const { handler } = require('../generate-link');
 
@@ -17,6 +20,7 @@ function event(document) {
     description: 'Orcamento OS',
     customer: { name: 'Cliente', email: 'c@example.com', cpf: document },
     items: [{ id: 'i1', title: 'Item', quantity: 1, unit_price_cents: 550 }],
+    metadata: { source_service: 'tech-challenge-application', service_order_id: 'os-1' },
   };
 }
 
@@ -45,12 +49,12 @@ test('envia identification CNPJ para 14 dígitos', async () => {
 test('registra attempt = 1 na primeira passada', async () => {
   mockRecord.mockReset();
   await handler(event('52998224725'));
-  expect(mockRecord).toHaveBeenCalledWith('generate-link', 'LINK_CREATED', expect.objectContaining({ attempt: 1 }));
+  expect(mockRecord).toHaveBeenCalledWith('generate-link', 'LINK_CREATED', expect.objectContaining({ attempt: 1, service_order_id: 'os-1' }));
 });
 
 test('registra attempt da nova tentativa diária (link_retry.count + 1) no LINK_ERROR', async () => {
   mockRecord.mockReset();
   global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
   await expect(handler({ ...event('52998224725'), link_retry: { count: 2 } })).rejects.toThrow('Mercado Pago error 503');
-  expect(mockRecord).toHaveBeenCalledWith('generate-link', 'LINK_ERROR', expect.objectContaining({ attempt: 3, httpStatus: 503 }));
+  expect(mockRecord).toHaveBeenCalledWith('generate-link', 'LINK_ERROR', expect.objectContaining({ attempt: 3, httpStatus: 503, service_order_id: 'os-1' }));
 });
