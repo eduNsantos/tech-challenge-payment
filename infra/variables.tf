@@ -3,17 +3,6 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "mp_access_token" {
-  type        = string
-  sensitive   = true
-  description = "Access token de producao do Mercado Pago"
-
-  validation {
-    condition     = length(trimspace(var.mp_access_token)) > 0
-    error_message = "mp_access_token vazio — verifique o secret MP_ACCESS_TOKEN no GitHub ou o terraform.tfvars."
-  }
-}
-
 variable "mp_webhook_secret" {
   type        = string
   sensitive   = true
@@ -28,7 +17,19 @@ variable "mp_webhook_secret" {
 variable "app_notification_url" {
   type        = string
   default     = ""
-  description = "Fallback opcional: URL para receber o link de pagamento quando a mensagem nao traz notification_url. O application envia notification_url em cada pedido, entao o deploy do payment-service nao depende da URL do app."
+  description = "Fallback: URL que recebe o link de pagamento quando a mensagem nao traz notification_url. Vazio = descobre pelo ELB do Service do app no EKS (app_k8s_service)."
+}
+
+variable "app_k8s_service" {
+  type        = string
+  default     = "postech/postech-app"
+  description = "<namespace>/<service> do app no EKS; o ELB criado pelo Kubernetes tem a tag kubernetes.io/service-name com esse valor"
+}
+
+variable "app_port" {
+  type        = number
+  default     = 8080
+  description = "Porta do Service LoadBalancer do app"
 }
 
 variable "link_retry_wait_seconds" {

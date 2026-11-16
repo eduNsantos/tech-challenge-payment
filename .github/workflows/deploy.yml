@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  # PRs ficam num grupo próprio para não cancelar um deploy manual na fila
+  # PRs ficam num grupo próprio para não cancelar um deploy na fila
   group: ${{ github.event_name == 'pull_request' && format('payment-service-pr-{0}', github.ref) || 'payment-service-deploy' }}
   cancel-in-progress: false
 
@@ -72,8 +72,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TF_VAR_mp_access_token:      ${{ secrets.MP_ACCESS_TOKEN }}
       TF_VAR_mp_webhook_secret:    ${{ secrets.MP_WEBHOOK_SECRET }}
+      # Não vira variável Terraform: é gravado direto no Secrets Manager após o apply (fica fora do state).
+      MP_ACCESS_TOKEN:             ${{ secrets.MP_ACCESS_TOKEN }}
       # Opcional: o application envia notification_url em cada pedido. Só serve de fallback.
       TF_VAR_app_notification_url: ${{ secrets.TF_VAR_app_notification_url }}
       # New Relic — opcional; com qualquer um vazio o deploy sobe sem monitoramento
@@ -118,40 +119,13 @@ jobs:
         with:
           terraform_version: "1.13.5"
 
-      - name: Ensure Terraform state bucket exists
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BACKEND_BUCKET="techchallenge-tfstate-${ACCOUNT_ID}"
-          echo "BACKEND_BUCKET=${BACKEND_BUCKET}" >> "$GITHUB_ENV"
-
-          if aws s3api head-bucket --bucket "$BACKEND_BUCKET" 2>/dev/null; then
-            echo "Bucket ${BACKEND_BUCKET} already exists."
-          else
-            echo "Creating bucket ${BACKEND_BUCKET}..."
-            aws s3api create-bucket --bucket "$BACKEND_BUCKET" --region us-east-1
-            aws s3api put-bucket-versioning \
-              --bucket "$BACKEND_BUCKET" \
-              --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption \
-              --bucket "$BACKEND_BUCKET" \
-              --server-side-encryption-configuration \
-              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-            aws s3api put-public-access-block \
-              --bucket "$BACKEND_BUCKET" \
-              --public-access-block-configuration \
-              "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-            echo "Bucket ${BACKEND_BUCKET} created."
-          fi
-
       - name: Terraform init
         working-directory: infra
         run: |
-          echo "Backend bucket: ${BACKEND_BUCKET}"
-
           for attempt in 1 2 3; do
             echo "Running terraform init (attempt ${attempt}/3)"
             set +e
-            terraform init -backend-config="bucket=${BACKEND_BUCKET}" 2>&1 | tee /tmp/terraform-init.log
+            terraform init -input=false -reconfigure 2>&1 | tee /tmp/terraform-init.log
             status=${PIPESTATUS[0]}
             set -e
 
@@ -200,7 +174,7 @@ jobs:
 
               if ! terraform state show "$TF_RESOURCE" >/dev/null 2>&1; then
                 echo "Importing $TF_RESOURCE"
-                terraform import "$TF_RESOURCE" "$SECRET_ARN"
+                terraform import -input=false "$TF_RESOURCE" "$SECRET_ARN"
               fi
             else
               echo "Secret $SECRET_NAME nao existe, Terraform ira criar."
@@ -217,11 +191,22 @@ jobs:
 
       - name: Terraform plan
         working-directory: infra
-        run: terraform plan
+        run: terraform plan -input=false
 
       - name: Terraform apply
         working-directory: infra
-        run: terraform apply -auto-approve
+        run: terraform apply -input=false -auto-approve
+
+      # O secret payment/mp-access-token é criado pelo Terraform (apply acima); o valor vem do GitHub.
+      - name: Publish MP access token
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws secretsmanager put-secret-value \
+            --secret-id payment/mp-access-token \
+            --region "$AWS_REGION" \
+            --secret-string "$(jq -cn --arg t "$MP_ACCESS_TOKEN" '{access_token: $t}')" \
+            --query VersionId --output text
 
       # URLs que o application e o Mercado Pago precisam — copie para PAYMENT_SERVICE_URL no app
       - name: Publish integration URLs

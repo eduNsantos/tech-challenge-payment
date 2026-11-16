@@ -1,6 +1,6 @@
 resource "aws_lambda_function" "generate_link" {
   function_name    = "payment-generate-link"
-  role             = data.aws_iam_role.lab_role.arn
+  role             = aws_iam_role.payment_lambda.arn
   runtime          = "nodejs24.x"
   handler          = local.newrelic_enabled ? local.newrelic_wrapper_handler : "generate-link/index.handler"
   layers           = local.newrelic_layers

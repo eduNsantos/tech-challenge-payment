@@ -27,6 +27,14 @@ function recordSagaEvent(step, status, attrs = {}) {
   }
 }
 
+// Id da O.S. na aplicação (metadata.service_order_id do pedido). Vai em todo evento como
+// `service_order_id`, o mesmo atributo da aplicação e do services-ms: assim uma consulta no
+// New Relic segue a O.S. pelos três serviços (dashboard "Jornada da O.S." no repo da aplicação).
+function serviceOrderId(metadata) {
+  const id = metadata?.service_order_id;
+  return typeof id === 'string' && id.trim() !== '' ? id : undefined;
+}
+
 // Segundos entre created_at do pedido e agora — usado para medir tempo até PAID/REJECTED/EXPIRED.
 function secondsSince(isoDate) {
   const start = Date.parse(isoDate);
@@ -34,4 +42,4 @@ function secondsSince(isoDate) {
   return Math.round((Date.now() - start) / 1000);
 }
 
-module.exports = { recordSagaEvent, secondsSince };
+module.exports = { recordSagaEvent, secondsSince, serviceOrderId };

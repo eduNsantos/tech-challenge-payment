@@ -43,7 +43,7 @@ PENDING → WAITING_PAYMENT → PAID
 |---|---|
 | Linguagem | Node.js 24.x |
 | Infra | Terraform ≥ 1.13.5 |
-| Cloud | AWS (us-east-1) — Account `008962119864` |
+| Cloud | AWS (us-east-1) — Account `477478162709` |
 | Banco | DynamoDB `payment-saga-state` (PAY_PER_REQUEST, GSI `order_id-index`) |
 | Fila | SQS `payment-orders` + DLQ `payment-orders-dlq` |
 | Orquestrador | Step Functions STANDARD `payment-saga` |
@@ -74,10 +74,10 @@ src/
 
 infra/
   bootstrap/main.tf       # Cria bucket S3 de state (roda 1× por conta)
-  providers.tf            # Backend S3 partial + providers
+  providers.tf            # Backend S3 + providers
   variables.tf
   data.tf                 # aws_caller_identity
-  iam.tf                  # Apenas data source da LabRole (sem criar roles)
+  iam.tf                  # Roles das Lambdas e da Step Functions
   dynamodb.tf
   sqs.tf
   secrets.tf
@@ -103,21 +103,14 @@ docs/                     # Arquitetura SAGA, monitoring.md, newrelic-dashboard.
 
 ## Constraints críticos
 
-### AWS Academy — LabRole
-O ambiente AWS Academy **bloqueia `iam:CreateRole` via SCP**. Nenhuma IAM role pode ser criada.
-Toda a infra usa a role pré-existente `LabRole`:
-```hcl
-data "aws_iam_role" "lab_role" {
-  name = "LabRole"
-}
-# Uso: role = data.aws_iam_role.lab_role.arn
-```
-**Nunca sugerir `aws_iam_role`, `aws_iam_role_policy` ou `aws_iam_role_policy_attachment`.**
+### IAM
+O `infra/iam.tf` cria roles próprias com escopo mínimo:
+- `payment-ms-lambda` — usada por todas as Lambdas (DynamoDB, Secrets Manager, SQS, Step Functions)
+- `payment-ms-step-functions` — usada pela state machine (invoca as Lambdas e envia para a DLQ)
 
 ### Backend Terraform
-- Bucket S3: `techchallenge-tfstate-008962119864`
+- Bucket S3: `techchallenge-tfstate-477478162709-v2` (fixo em `providers.tf`, igual aos outros repos)
 - Key: `payment-service/terraform.tfstate`
-- Arquivo local (gitignore): `infra/backend.hcl`
 
 ### Secrets Manager com `recovery_window_in_days = 30`
 Para destruir e recriar imediatamente, o CI faz `aws secretsmanager restore-secret` primeiro.
@@ -128,7 +121,7 @@ Secrets necessários no repositório:
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-MP_ACCESS_TOKEN            # → TF_VAR_mp_access_token
+MP_ACCESS_TOKEN            # → gravado direto em payment/mp-access-token (put-secret-value após o apply; não é var Terraform)
 MP_WEBHOOK_SECRET          # → TF_VAR_mp_webhook_secret
 TF_VAR_app_notification_url  # opcional — fallback; o app envia notification_url em cada mensagem
 NEW_RELIC_LICENSE_KEY      # opcional — junto com NEW_RELIC_ACCOUNT_ID liga o monitoramento (mesmos nomes do repo kubernetes)
@@ -177,4 +170,4 @@ Ver schema completo em `bruno/docs/sqs-message-schema.md`.
 - Secrets são buscados com cache via variável de módulo (`let cached...`)
 - Idempotência: `idempotency_key = SHA-256(order_id|amount_cents|created_at)` — gerado pelo produtor
 - O `idempotency_key` é o `name` da execução no Step Functions (rejeição nativa de duplicatas)
-- Monitoramento: `require('../lib/monitoring')` + `recordSagaEvent(step, status, attrs)` — nunca enviar dados pessoais. O pacote `newrelic` vem da layer, não do package.json. Ver `docs/monitoring.md`
+- Monitoramento: `require('../lib/monitoring')` + `recordSagaEvent(step, status, attrs)` — nunca enviar dados pessoais. Todo evento novo leva `service_order_id: serviceOrderId(metadata)` (id da O.S. da aplicação; é o atributo que liga os três serviços no New Relic). O pacote `newrelic` vem da layer, não do package.json. Ver `docs/monitoring.md`

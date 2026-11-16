@@ -1,6 +1,6 @@
 const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const { createHash } = require('crypto');
-const { recordSagaEvent } = require('../lib/monitoring');
+const { recordSagaEvent, serviceOrderId } = require('../lib/monitoring');
 
 const sqs = new SQSClient({});
 
@@ -52,7 +52,7 @@ exports.handler = async (event) => {
     MessageBody: JSON.stringify(message),
   }));
 
-  recordSagaEvent('orders', 'QUEUED', { orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, currency });
+  recordSagaEvent('orders', 'QUEUED', { service_order_id: serviceOrderId(metadata), orderId: order_id, idempotencyKey: idempotency_key, amountCents: amount_cents, currency });
 
   return ok(202, { idempotency_key, order_id, status: 'QUEUED' });
 };
